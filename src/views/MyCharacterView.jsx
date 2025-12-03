@@ -22,6 +22,7 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
     const [encumbrance, setEncumbrance] = useState({ used: 0, shared: 0 });
     const [questStats, setQuestStats] = useState({});
     const [showQuestList, setShowQuestList] = useState(false);
+    const [confirmPurgeVendors, setConfirmPurgeVendors] = useState(false);
 
     useEffect(() => {
         const loadChars = () => {
@@ -94,6 +95,22 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     }
                 }
             } catch (err) { console.error('Log import error', err); }
+        };
+
+        const handlePurgeVendorLogs = async () => {
+            if (!confirmPurgeVendors) {
+                setConfirmPurgeVendors(true);
+                setTimeout(() => setConfirmPurgeVendors(false), 4000);
+                return;
+            }
+            if (!selectedCharId) return;
+            try {
+                const vendorEntries = await db.objects.where('type').equals('vendors').toArray();
+                const toPurge = vendorEntries.filter(e => e.data && e.data.character === selectedCharId);
+                const ids = toPurge.map(e => [e.type, e.id]);
+                await db.objects.bulkDelete(ids);
+                setConfirmPurgeVendors(false);
+            } catch (err) { console.error('Vendor purge error', err); }
         };
 
         const loadData = async () => {
@@ -545,6 +562,16 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                 <div className="text-[10px] uppercase text-slate-500 font-bold mb-2">Import Player Logs</div>
                                 <input type="file" accept=".log,.txt" onChange={(e)=>handleCharLogUpload(e)} className="hidden" id="char-log-upload" />
                                 <label htmlFor="char-log-upload" className="px-2 py-1 bg-indigo-600 text-white rounded text-xs cursor-pointer hover:bg-indigo-500">Select Log File</label>
+                                <button 
+                                    onClick={handlePurgeVendorLogs}
+                                    className={`block w-full text-right text-[10px] font-bold uppercase tracking-wider mt-2 transition-colors ${
+                                        confirmPurgeVendors 
+                                            ? 'text-white bg-red-600 py-1 px-2 rounded' 
+                                            : 'text-red-500 hover:text-red-400 hover:underline'
+                                    }`}
+                                >
+                                    {confirmPurgeVendors ? "CONFIRM PURGE?" : "PURGE VENDOR LOGS"}
+                                </button>
                             </div>
                         </div>
                     </div>
