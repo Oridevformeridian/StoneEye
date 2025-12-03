@@ -14,6 +14,7 @@ export default function IngestView({ onIngestComplete, autoStart }) {
     const [corsError, setCorsError] = useState(false);
     const [logs, setLogs] = useState([]);
     const [confirmPurge, setConfirmPurge] = useState(false);
+    const [confirmPurgeAll, setConfirmPurgeAll] = useState(false);
 
     const addLog = (msg) => setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev]);
 
@@ -255,6 +256,35 @@ export default function IngestView({ onIngestComplete, autoStart }) {
         setConfirmPurge(false);
     };
 
+    const handlePurgeAll = async () => {
+        if (!confirmPurgeAll) {
+            setConfirmPurgeAll(true);
+            setTimeout(() => setConfirmPurgeAll(false), 4000);
+            return;
+        }
+        
+        try {
+            // Clear localStorage
+            const keysToRemove = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key.startsWith('gorgon_')) {
+                    keysToRemove.push(key);
+                }
+            }
+            keysToRemove.forEach(k => localStorage.removeItem(k));
+            
+            // Clear IndexedDB
+            await db.objects.clear();
+            
+            addLog(`Purged all data: ${keysToRemove.length} localStorage items and entire database.`);
+            setConfirmPurgeAll(false);
+        } catch (err) {
+            addLog(`Error purging all data: ${err.message}`);
+            setConfirmPurgeAll(false);
+        }
+    };
+
     return (
         <div className="p-8 max-w-md mx-auto">
             <h2 className="text-2xl font-light text-white mb-4">Data Import</h2>
@@ -286,16 +316,24 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                                 </div>
                             )}
                         </div>
-                        <button 
-                            onClick={handlePurge} 
-                            className={`block w-full text-right text-xs font-bold uppercase tracking-wider mb-4 transition-colors ${confirmPurge ? 'text-white bg-red-600 py-2 px-3 rounded' : 'text-red-500 hover:text-red-400 hover:underline'}`}
-                        >
-                            {confirmPurge ? "CONFIRM PURGE?" : "PURGE CHARACTER DATA"}
-                        </button>
                         <div className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">User Data Import</div>
-                        <div className="p-4 border-2 border-dashed border-slate-600 rounded-lg text-center hover:border-indigo-500 transition-colors">
+                        <div className="p-4 border-2 border-dashed border-slate-600 rounded-lg text-center hover:border-indigo-500 transition-colors mb-4">
                             <input type="file" multiple accept=".json" onChange={handleFileUpload} className="hidden" id="user-upload" />
                             <label htmlFor="user-upload" className="cursor-pointer text-sm text-slate-300 hover:text-white block">Click to upload Character/Storage JSON</label>
+                        </div>
+                        <div className="space-y-2">
+                            <button 
+                                onClick={handlePurge} 
+                                className={`block w-full text-center text-xs font-bold uppercase tracking-wider transition-colors ${confirmPurge ? 'text-white bg-red-600 py-2 px-3 rounded' : 'text-red-500 hover:text-red-400 hover:underline'}`}
+                            >
+                                {confirmPurge ? "CONFIRM PURGE?" : "PURGE CHARACTER DATA"}
+                            </button>
+                            <button 
+                                onClick={handlePurgeAll} 
+                                className={`block w-full text-center text-xs font-bold uppercase tracking-wider transition-colors ${confirmPurgeAll ? 'text-white bg-red-700 py-2 px-3 rounded' : 'text-red-600 hover:text-red-500 hover:underline'}`}
+                            >
+                                {confirmPurgeAll ? "CONFIRM PURGE ALL?" : "PURGE ALL DATA"}
+                            </button>
                         </div>
                     </div>
                 )}

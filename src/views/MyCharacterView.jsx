@@ -629,12 +629,16 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                 <div className="flex justify-between text-sm"><span className="text-indigo-300">Shared Storage</span> <span>{encumbrance.shared}</span></div>
                             </div>
                             <div className="mt-3 border-t border-slate-700/50 pt-3">
-                                <div className="text-[10px] uppercase text-slate-500 font-bold mb-2">Import Player Logs</div>
-                                <input type="file" accept=".log,.txt" onChange={(e)=>handleCharLogUpload(e)} className="hidden" id="char-log-upload" />
-                                <label htmlFor="char-log-upload" className="px-2 py-1 bg-indigo-600 text-white rounded text-xs cursor-pointer hover:bg-indigo-500">Select Log File</label>
+                                <div className="text-[10px] uppercase text-slate-500 font-bold mb-2">Data Management</div>
+                                <button 
+                                    onClick={() => { if (typeof goToIngest === 'function') goToIngest(); }}
+                                    className="w-full px-2 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-500 mb-2"
+                                >
+                                    Import Game Data
+                                </button>
                                 <button 
                                     onClick={handlePurgeVendorLogs}
-                                    className={`block w-full text-right text-[10px] font-bold uppercase tracking-wider mt-2 transition-colors ${
+                                    className={`block w-full text-center text-[10px] font-bold uppercase tracking-wider transition-colors ${
                                         confirmPurgeVendors 
                                             ? 'text-white bg-red-600 py-1 px-2 rounded' 
                                             : 'text-red-500 hover:text-red-400 hover:underline'
