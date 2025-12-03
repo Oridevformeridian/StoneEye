@@ -21,10 +21,11 @@ The vendor tracking feature supports importing player logs to track real-time ve
 
 ### How It Works
 
-1. **Enable Logging**: Turn on logging in Project Gorgon (`/togglelog` command)
+1. **Enable Logging**: Turn on logging in Project Gorgon (in the settings window under VIP)
 2. **Visit All Vendors**: On the character you want to track, visit each vendor and open their shop tab
-3. **Import Logs**: Without logging in on another character (which would overwrite the logs), go to the NPCs tab in StoneEye and click "Upload Logs"
-4. **View Vendor Data**: The app displays:
+3. **Close Project Gorgon**: You need to close the client to create the latest log
+4. **Import Logs**: Without logging in on another character (which would overwrite the logs), go to the NPCs tab in StoneEye and click "Upload Logs"
+5. **View Vendor Data**: The app displays:
    - Current favor level with each NPC
    - Vendor balance / max balance
    - Restock timer (countdown + local time)
@@ -41,3 +42,4 @@ The vendor tracking feature supports importing player logs to track real-time ve
 ### Why Logs?
 
 This is a proof-of-concept for the UX. Ideally, vendor data would come from the game's API or a better export mechanism, but for now, log parsing allows us to demonstrate the feature's value.
+
