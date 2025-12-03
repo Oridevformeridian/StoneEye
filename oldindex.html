@@ -1,0 +1,2471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>The Stone Eye</title>
+    <meta name="description" content="Offline-capable data explorer for Project Gorgon.">
+
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="format-detection" content="telephone=no">
+    
+    <link rel="apple-touch-icon" href="https://cdn.projectgorgon.com/v439/icons/icon_1003.png">
+    <link rel="icon" type="image/png" href="https://cdn.projectgorgon.com/v439/icons/icon_1003.png">
+
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.min.js"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dexie/3.2.4/dexie.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .safe-area-pb { padding-bottom: env(safe-area-inset-bottom); }
+        .sticky-col { position: sticky; left: 0; z-index: 10; }
+        body { -webkit-tap-highlight-color: transparent; }
+        /* Animation for bookmarks */
+        @keyframes pop { 0% { transform: scale(1); } 50% { transform: scale(1.3); } 100% { transform: scale(1); } }
+        .animate-pop { animation: pop 0.2s ease-out; }
+        /* Safe area padding for bottom nav */
+        .nav-safe-padding { padding-bottom: max(env(safe-area-inset-bottom), 1rem); }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 h-dvh w-screen overflow-hidden selection:bg-indigo-500/30">
+    <div id="root" class="h-full w-full"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+        // ==========================================
+        // 1. DATABASE & CONSTANTS
+        // ==========================================
+        const db = new Dexie('GorgonDB_v9'); 
+        db.version(1).stores({
+            objects: '[type+id], type, name, *refs, [type+category]',
+            userData: '[type+id], type' 
+        });
+
+        const KNOWN_FILES = [
+            'abilities.json', 'abilitykeywords.json', 'advancementtables.json', 'ai.json', 
+            'areas.json', 'attributes.json', 'directedgoals.json', 'effects.json', 
+            'items.json', 'itemuses.json', 'landmarks.json', 'lorebookinfo.json', 
+            'lorebooks.json', 'npcs.json', 'playertitles.json', 'quests.json', 
+            'recipes.json', 'skills.json', 'storagevaults.json', 'tsysclientinfo.json', 
+            'tsysprofiles.json', 'xptables.json'
+        ];
+
+        const CATEGORY_META = {
+            items: { icon: 'package', label: 'Items', desc: 'Equipment & Loot', gameIconId: 2301 },
+            recipes: { icon: 'scroll', label: 'Recipes', desc: 'Crafting Formulas', gameIconId: 5002 },
+            skills: { icon: 'book', label: 'Skills', desc: 'Progression', gameIconId: 5005 },
+            abilities: { icon: 'zap', label: 'Abilities', desc: 'Combat Moves', gameIconId: 3608 },
+            npcs: { icon: 'users', label: 'NPCs', desc: 'Characters', gameIconId: 3402 },
+            quests: { icon: 'flag', label: 'Quests', desc: 'Missions', gameIconId: 3301 },
+            areas: { icon: 'map', label: 'Areas', desc: 'World Map', gameIconId: 3501 },
+            lorebooks: { icon: 'book-open', label: 'Lore', desc: 'Books', gameIconId: 5005 },
+            effects: { icon: 'sparkles', label: 'Effects', desc: 'Buffs/Debuffs', gameIconId: 3101 },
+            storagevaults: { icon: 'box', label: 'Storage', desc: 'Vaults', gameIconId: 2302 },
+            playertitles: { icon: 'award', label: 'Titles', desc: 'Player Titles', gameIconId: 5104 },
+            attributes: { icon: 'activity', label: 'Stats', desc: 'Attributes', gameIconId: 3107 },
+            ai: { icon: 'cpu', label: 'AI', desc: 'Monster Logic', gameIconId: 3416 },
+            tsysclientinfo: { icon: 'gem', label: 'Treasure Mods', desc: 'Loot Enchantments', gameIconId: 3302 },
+        };
+
+        const FAVOR_LEVELS = ["Neutral", "Comfortable", "Friends", "CloseFriends", "BestFriends", "LikeFamily", "SoulMates"];
+
+        const getCategoryMeta = (filename) => {
+            const key = filename.replace('.json', '');
+            return {
+                key,
+                ...(CATEGORY_META[key] || { icon: 'file', label: key.charAt(0).toUpperCase() + key.slice(1), desc: 'Data', gameIconId: 5001 })
+            };
+        };
+
+        // ==========================================
+        // 2. HELPER COMPONENTS
+        // ==========================================
+        
+        // REPAIRED ICON COMPONENT WITH RETRY LOGIC
+        const Icon = ({ name, className }) => {
+            const ref = useRef(null);
+            
+            useEffect(() => {
+                let attempts = 0;
+                const renderIcon = () => {
+                    if (!ref.current) return;
+                    
+                    if (window.lucide) {
+                        const iconElement = document.createElement('i');
+                        iconElement.setAttribute('data-lucide', name);
+                        ref.current.innerHTML = '';
+                        ref.current.appendChild(iconElement);
+                        
+                        try {
+                            window.lucide.createIcons({
+                                root: ref.current,
+                                nameAttr: 'data-lucide',
+                                attrs: { 
+                                    width: '100%', 
+                                    height: '100%',
+                                    'stroke-width': '2' 
+                                }
+                            });
+                        } catch(e) {
+                            console.warn("Lucide render error", e);
+                        }
+                    } else if (attempts < 20) {
+                        // Retry every 100ms if library isn't loaded yet
+                        attempts++;
+                        setTimeout(renderIcon, 100);
+                    }
+                };
+                
+                renderIcon();
+            }, [name]);
+
+            // Added minWidth/minHeight to prevent collapse before render
+            return (
+                <span 
+                    ref={ref} 
+                    className={`inline-block align-middle ${className || 'w-5 h-5'}`} 
+                    style={{ minWidth: '1em', minHeight: '1em' }}
+                />
+            );
+        };
+
+        const GameIcon = ({ iconId, size = "w-8 h-8", className = "" }) => {
+            if (!iconId) return null;
+            return (
+                <div className={`${size} bg-slate-800 rounded border border-slate-700 shrink-0 overflow-hidden ${className}`}>
+                    <img 
+                        src={`https://cdn.projectgorgon.com/v439/icons/icon_${iconId}.png`} 
+                        onError={(e) => {e.target.style.display='none'}}
+                        className="w-full h-full object-cover"
+                        alt=""
+                    />
+                </div>
+            );
+        };
+
+        // UPDATED: Corrected Wiki URL logic for Skills
+        const WikiButton = ({ type, name }) => {
+            const getUrl = () => {
+                if (!name) return 'https://wiki.projectgorgon.com/wiki/Main_Page';
+                const cleanName = name.replace(/ /g, '_');
+                const baseUrl = 'https://wiki.projectgorgon.com/wiki';
+                
+                switch(type) {
+                    case 'items': return `${baseUrl}/Item:${cleanName}`;
+                    case 'skills': return `${baseUrl}/${cleanName}`; // Changed: Removed /Skill: prefix
+                    case 'abilities': return `${baseUrl}/Ability:${cleanName}`;
+                    case 'recipes': return `${baseUrl}/Recipe:${cleanName}`;
+                    case 'npcs': return `${baseUrl}/NPC:${cleanName}`;
+                    default: return `${baseUrl}/${cleanName}`;
+                }
+            };
+
+            return (
+                <a 
+                    href={getUrl()} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    className="absolute right-12 top-0 p-2 text-slate-600 hover:text-indigo-400 hover:bg-slate-800 rounded-full transition-colors z-20"
+                    title="Open Wiki"
+                >
+                    <Icon name="external-link" className="w-6 h-6" />
+                </a>
+            );
+        };
+
+        const LoadingBar = ({ progress, status, subStatus }) => (
+            <div className="w-full max-w-md mx-auto mt-4 px-4">
+                <div className="flex justify-between text-xs mb-1 text-slate-400">
+                    <span>{status}</span>
+                    <span>{Math.round(progress)}%</span>
+                </div>
+                <div className="w-full bg-slate-800 rounded-full h-2 mb-2">
+                    <div className="bg-indigo-500 h-2 rounded-full transition-all duration-300" style={{ width: `${progress}%` }}></div>
+                </div>
+                <div className="text-center text-xs text-slate-500 truncate">{subStatus}</div>
+            </div>
+        );
+
+        const Badge = ({ children, color = 'slate' }) => {
+            const colors = {
+                slate: 'bg-slate-800 text-slate-300 border-slate-700',
+                indigo: 'bg-indigo-900/40 text-indigo-300 border-indigo-800',
+                emerald: 'bg-emerald-900/40 text-emerald-300 border-emerald-800',
+                amber: 'bg-amber-900/40 text-amber-300 border-amber-800',
+                red: 'bg-red-900/40 text-red-300 border-red-800',
+            };
+            return (
+                <span className={`px-2 py-1 rounded text-[10px] uppercase font-bold border ${colors[color] || colors.slate}`}>
+                    {children}
+                </span>
+            );
+        };
+
+        const StatBox = ({ label, value, onClick }) => (
+            <div className="bg-slate-800/40 p-3 rounded border border-slate-700/50">
+                <div className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">{label}</div>
+                {onClick ? (
+                    <button onClick={onClick} className="text-indigo-400 hover:text-indigo-300 font-medium text-left text-sm truncate w-full">
+                        {value}
+                    </button>
+                ) : (
+                    <div className="text-slate-200 font-medium text-sm truncate">{value}</div>
+                )}
+            </div>
+        );
+
+        const ReferenceList = ({ title, refs, onNavigate }) => {
+            if (!refs || refs.length === 0) return null;
+            return (
+                <div className="mt-8 pt-8 border-t border-slate-800">
+                    <h3 className="text-lg font-light text-white flex items-center gap-2 mb-4">
+                        <Icon name="link" className="w-5 h-5 text-indigo-400" />
+                        {title}
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {refs.map(ref => (
+                            <div 
+                                key={`${ref.type}-${ref.id}`}
+                                onClick={() => onNavigate(ref.type, ref.id)}
+                                className="bg-slate-800/50 p-3 rounded border border-slate-700/50 active:bg-slate-700 hover:border-indigo-500 cursor-pointer transition-colors flex items-center gap-3"
+                            >
+                                <div className="shrink-0">
+                                    <GameIcon iconId={ref.data.IconId || ref.data.IconID} size="w-10 h-10" />
+                                </div>
+                                <div className="min-w-0 w-full">
+                                    <div className="flex justify-between items-center mb-0.5">
+                                        <span className="text-[10px] font-bold text-indigo-400 uppercase">{ref.type}</span>
+                                        {(ref.data.Level || ref.data.SkillLevelReq) && <span className="text-[10px] font-mono text-slate-500">Lvl {ref.data.Level || ref.data.SkillLevelReq}</span>}
+                                    </div>
+                                    <div className="text-slate-200 text-sm font-medium truncate">{ref.name}</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const NavButton = ({ active, onClick, icon, label }) => (
+            <button 
+                onClick={onClick}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${active ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/20' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+            >
+                <Icon name={icon} className="w-5 h-5" /> {label}
+            </button>
+        );
+
+        const MobileNavBtn = ({ active, onClick, icon, label }) => (
+            <button 
+                onClick={onClick}
+                className={`flex flex-col items-center justify-center w-full h-full ${active ? 'text-indigo-400' : 'text-slate-500'}`}
+            >
+                <Icon name={icon} className={`w-6 h-6 mb-1 ${active ? 'animate-bounce' : ''}`} />
+                <span className="text-[10px] font-medium">{label}</span>
+            </button>
+        );
+
+        // ==========================================
+        // 3. SUB-COMPONENTS (Renderers & Rows)
+        // ==========================================
+
+        const MobileReferenceView = ({ onNavigate, switchTab }) => (
+            <div className="p-4 md:p-8 pb-32 h-full overflow-y-auto">
+                <h2 className="text-3xl font-light text-white mb-6">Reference</h2>
+                <div className="grid grid-cols-2 gap-4">
+                    <div onClick={() => switchTab('npc-services')} className="bg-slate-800/50 aspect-square p-4 rounded-xl border border-slate-700 hover:border-indigo-500 hover:bg-slate-800 active:bg-slate-700 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all shadow-lg shadow-black/20">
+                        <div className="w-16 h-16 rounded-full bg-slate-900 flex items-center justify-center text-indigo-400 ring-1 ring-slate-700">
+                            <GameIcon iconId={3402} size="w-10 h-10" />
+                        </div>
+                        <div className="text-center">
+                            <span className="block font-bold text-slate-200 text-lg">NPCs</span>
+                            <span className="text-xs text-slate-500">Services & Storage</span>
+                        </div>
+                    </div>
+
+                    <div onClick={() => switchTab('active-skills')} className="bg-slate-800/50 aspect-square p-4 rounded-xl border border-slate-700 hover:border-amber-500/50 hover:bg-slate-800 active:bg-slate-700 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all shadow-lg shadow-black/20">
+                        <div className="w-16 h-16 rounded-full bg-slate-900 flex items-center justify-center text-amber-400 ring-1 ring-slate-700">
+                            <GameIcon iconId={3608} size="w-10 h-10" />
+                        </div>
+                        <div className="text-center">
+                            <span className="block font-bold text-slate-200 text-lg">Skills</span>
+                            <span className="text-xs text-slate-500">Combat & Active</span>
+                        </div>
+                    </div>
+
+                    <div onClick={() => switchTab('trade-skills')} className="bg-slate-800/50 aspect-square p-4 rounded-xl border border-slate-700 hover:border-emerald-500/50 hover:bg-slate-800 active:bg-slate-700 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all shadow-lg shadow-black/20">
+                        <div className="w-16 h-16 rounded-full bg-slate-900 flex items-center justify-center text-emerald-400 ring-1 ring-slate-700">
+                            <GameIcon iconId={5002} size="w-10 h-10" />
+                        </div>
+                        <div className="text-center">
+                            <span className="block font-bold text-slate-200 text-lg">Crafting</span>
+                            <span className="text-xs text-slate-500">Trades & Arts</span>
+                        </div>
+                    </div>
+
+                    <div onClick={() => switchTab('lore')} className="bg-slate-800/50 aspect-square p-4 rounded-xl border border-slate-700 hover:border-blue-500/50 hover:bg-slate-800 active:bg-slate-700 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all shadow-lg shadow-black/20">
+                        <div className="w-16 h-16 rounded-full bg-slate-900 flex items-center justify-center text-blue-400 ring-1 ring-slate-700">
+                            <GameIcon iconId={5005} size="w-10 h-10" />
+                        </div>
+                        <div className="text-center">
+                            <span className="block font-bold text-slate-200 text-lg">Lore</span>
+                            <span className="text-xs text-slate-500">Books & More</span>
+                        </div>
+                    </div>
+
+                    <div onClick={() => switchTab('treasure')} className="col-span-2 bg-slate-800/50 p-6 rounded-xl border border-slate-700 hover:border-purple-500/50 hover:bg-slate-800 active:bg-slate-700 flex items-center gap-6 cursor-pointer transition-all shadow-lg shadow-black/20">
+                        <div className="w-16 h-16 shrink-0 rounded-full bg-slate-900 flex items-center justify-center text-purple-400 ring-1 ring-slate-700">
+                            <GameIcon iconId={3302} size="w-10 h-10" />
+                        </div>
+                        <div>
+                            <span className="block font-bold text-slate-200 text-lg">Treasure Mods</span>
+                            <span className="text-xs text-slate-500">Equipment modifications database</span>
+                        </div>
+                    </div>
+
+                     <div onClick={() => switchTab('bookmarks')} className="col-span-2 bg-slate-800/50 p-6 rounded-xl border border-slate-700 hover:border-yellow-500/50 hover:bg-slate-800 active:bg-slate-700 flex items-center gap-6 cursor-pointer transition-all shadow-lg shadow-black/20">
+                        <div className="w-16 h-16 shrink-0 rounded-full bg-slate-900 flex items-center justify-center text-yellow-400 ring-1 ring-slate-700">
+                            <Icon name="star" className="w-8 h-8" />
+                        </div>
+                        <div>
+                            <span className="block font-bold text-slate-200 text-lg">Bookmarks</span>
+                            <span className="text-xs text-slate-500">Your saved items</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+
+        // MODIFIED: Uses gameIconId from CATEGORY_META for visual fidelity
+        const LandingView = ({ onSelectCategory }) => {
+            return (
+                <div className="p-4 md:p-8 pb-24">
+                    <h2 className="text-2xl md:text-3xl font-light text-white mb-6">Data Categories</h2>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-6">
+                        {KNOWN_FILES.map(file => {
+                            const meta = getCategoryMeta(file);
+                            return (
+                                <div 
+                                    key={meta.key}
+                                    onClick={() => onSelectCategory(meta.key)}
+                                    className="bg-slate-800/50 active:bg-slate-700 hover:bg-slate-700/50 rounded-xl p-4 cursor-pointer border border-slate-700 hover:border-indigo-500/50 transition-all group shadow-sm"
+                                >
+                                    <div className="flex items-center justify-between mb-3">
+                                        <div className="p-2.5 bg-slate-900 rounded-lg group-hover:ring-1 group-hover:ring-indigo-500/50">
+                                            {meta.gameIconId ? (
+                                                <GameIcon iconId={meta.gameIconId} size="w-8 h-8" />
+                                            ) : (
+                                                <Icon name={meta.icon} className="w-8 h-8 text-indigo-400" />
+                                            )}
+                                        </div>
+                                    </div>
+                                    <h3 className="text-sm md:text-base font-bold text-slate-200 mb-0.5">{meta.label}</h3>
+                                    <p className="text-[10px] md:text-xs text-slate-500 line-clamp-1">{meta.desc}</p>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        };
+
+        const ResultRow = ({ obj, isSelected, onClick }) => {
+            const icon = obj.data.IconId || obj.data.IconID || obj.derivedIcon || (obj.type === 'skills' ? 5005 : null);
+            const level = obj.data.Level || obj.data.SkillLevelReq || null;
+
+            return (
+                <div onClick={() => onClick(obj)} className={`p-3 border-b border-slate-800 cursor-pointer hover:bg-slate-800/50 transition-colors flex gap-3 items-center ${isSelected ? 'bg-indigo-900/20 border-l-2 border-l-indigo-500' : ''}`}>
+                    <GameIcon iconId={icon} size="w-10 h-10" />
+                    <div className="min-w-0 flex-1">
+                        <div className="font-medium text-slate-200 truncate text-sm">{obj.name}</div>
+                        <div className="text-[10px] text-slate-500 mt-0.5 flex justify-between">
+                            <span>{obj.category === 'active' || obj.category === 'trade' || obj.category === 'lore' ? 'Skill' : obj.type}</span>
+                            {level && <span className="text-slate-400 font-mono">Lvl {level}</span>}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- 4. DETAIL RENDERERS ---
+
+        const ItemDetail = ({ data, onNavigate, referencedBy }) => (
+            <div className="space-y-6 pb-24">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <StatBox label="Value" value={`${data.Value || 0} Councils`} />
+                    <StatBox label="Stack Size" value={data.MaxStackSize || 1} />
+                    <StatBox label="Slot" value={data.EquipSlot || "None"} />
+                    <StatBox label="Type" value={Array.isArray(data.Keywords) ? data.Keywords[0]?.replace('ItemClass_', '') : 'Item'} />
+                </div>
+                
+                {data.EffectDescs && data.EffectDescs.length > 0 && (
+                    <div className="bg-slate-800/50 p-4 rounded border border-slate-700/50">
+                        <h4 className="text-sm font-bold text-indigo-400 mb-3 flex items-center gap-2">
+                            <Icon name="sparkles" className="w-4 h-4" /> Effects
+                        </h4>
+                        <ul className="space-y-2">
+                            {data.EffectDescs.map((eff, i) => (
+                                <li key={i} className="text-sm text-slate-300 flex items-start gap-2 leading-snug">
+                                    <span className="mt-1.5 w-1 h-1 bg-indigo-500 rounded-full shrink-0"></span>
+                                    {eff}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+
+                {data.Keywords && (
+                    <div>
+                        <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Keywords</h4>
+                        <div className="flex flex-wrap gap-1.5">
+                            {data.Keywords.map(k => <Badge key={k}>{k}</Badge>)}
+                        </div>
+                    </div>
+                )}
+
+                <ReferenceList title="Referenced By" refs={referencedBy} onNavigate={onNavigate} />
+            </div>
+        );
+
+        const RecipeDetail = ({ data, onNavigate, referencedBy }) => {
+            const [itemNames, setItemNames] = useState({});
+            useEffect(() => {
+                const fetchNames = async () => {
+                    const idsToLoad = new Set();
+                    if (data.Ingredients) data.Ingredients.forEach(ing => ing.ItemCode && idsToLoad.add(ing.ItemCode));
+                    const allResults = [...(data.ResultItems || []), ...(data.ProtoResultItems || [])];
+                    allResults.forEach(res => res.ItemCode && idsToLoad.add(res.ItemCode));
+                    if (idsToLoad.size === 0) { setItemNames({}); return; }
+                    const newNames = {};
+                    await Promise.all(Array.from(idsToLoad).map(async (id) => {
+                        const item = await db.objects.get({ type: 'items', id: id });
+                        if (item) newNames[id] = { name: item.name, iconId: item.data.IconId || item.data.IconID };
+                    }));
+                    setItemNames(newNames);
+                };
+                fetchNames();
+            }, [data]);
+
+            const renderResults = (list) => (
+                <ul className="space-y-2">
+                    {(list || []).map((res, i) => {
+                        const itemInfo = itemNames[res.ItemCode];
+                        return (
+                            <li key={i} className="flex justify-between items-center text-sm p-2 bg-slate-900/30 rounded">
+                                {res.ItemCode ? (
+                                    <button onClick={() => onNavigate('items', res.ItemCode)} className="flex items-center gap-2 text-slate-300 hover:text-indigo-400 hover:underline text-left">
+                                        <GameIcon iconId={itemInfo?.iconId} size="w-6 h-6" />
+                                        {itemInfo?.name || `Item ${res.ItemCode}`}
+                                    </button>
+                                ) : <span className="text-slate-300">Unknown</span>}
+                                <span className="font-mono text-indigo-400">x{res.StackSize}</span>
+                            </li>
+                        );
+                    })}
+                </ul>
+            );
+
+            return (
+                <div className="space-y-6">
+                    <div className="grid grid-cols-2 gap-3">
+                        <StatBox label="Skill" value={data.Skill || "None"} onClick={data.Skill ? () => onNavigate('skills', data.Skill) : undefined} />
+                        <StatBox label="Level" value={data.SkillLevelReq || 0} />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="bg-slate-800/30 p-4 rounded border border-slate-700/50">
+                            <h4 className="text-sm font-bold text-emerald-400 mb-3 flex items-center gap-2"><Icon name="package-plus" className="w-4 h-4" /> Ingredients</h4>
+                            <ul className="space-y-2">
+                                {(data.Ingredients || []).map((ing, i) => {
+                                    const itemInfo = itemNames[ing.ItemCode];
+                                    return (
+                                        <li key={i} className="flex justify-between items-center text-sm p-2 bg-slate-900/30 rounded">
+                                            {ing.ItemCode ? (
+                                                <button onClick={() => onNavigate('items', ing.ItemCode)} className="flex items-center gap-2 text-slate-300 hover:text-emerald-400 hover:underline text-left">
+                                                    <GameIcon iconId={itemInfo?.iconId} size="w-6 h-6" />
+                                                    {itemInfo?.name || `Item ${ing.ItemCode}`}
+                                                </button>
+                                            ) : <span className="text-slate-300">{`Any ${ing.Keyword}`}</span>}
+                                            <span className="font-mono text-emerald-400">x{ing.StackSize}</span>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        </div>
+                        <div className="bg-slate-800/30 p-4 rounded border border-slate-700/50">
+                            <h4 className="text-sm font-bold text-indigo-400 mb-3 flex items-center gap-2"><Icon name="gift" className="w-4 h-4" /> Results</h4>
+                            {renderResults(data.ResultItems)}
+                            {data.ProtoResultItems && <div className="mt-4 pt-4 border-t border-slate-700/50"><div className="text-xs font-bold text-slate-500 mb-2">Enchanted</div>{renderResults(data.ProtoResultItems)}</div>}
+                        </div>
+                    </div>
+                    <ReferenceList title="Referenced By" refs={referencedBy} onNavigate={onNavigate} />
+                </div>
+            );
+        };
+
+        const AbilityDetail = ({ data, onNavigate, referencedBy }) => {
+            const [ammoItems, setAmmoItems] = useState([]);
+            const [reagentNames, setReagentNames] = useState({});
+
+            useEffect(() => {
+                const fetchReagents = async () => {
+                    if (!data.ItemsConsumed) { setReagentNames({}); return; }
+                    const newNames = {};
+                    await Promise.all(data.ItemsConsumed.map(async (item) => {
+                        if (item.ItemCode) {
+                            const obj = await db.objects.get({ type: 'items', id: item.ItemCode });
+                            if (obj) newNames[item.ItemCode] = { name: obj.name, iconId: obj.data.IconId || obj.data.IconID };
+                        }
+                    }));
+                    setReagentNames(newNames);
+                };
+                fetchReagents();
+            }, [data]);
+
+            useEffect(() => {
+                const fetchAmmo = async () => {
+                    if (!data.AmmoKeywords) { setAmmoItems([]); return; }
+                    const allAmmo = [];
+                    for (const k of data.AmmoKeywords) {
+                        const items = await db.objects.where('refs').equals(`keyword:${k.Keyword}`).toArray();
+                        items.forEach(item => allAmmo.push({ ...item, keyword: k.Keyword }));
+                    }
+                    setAmmoItems(allAmmo);
+                };
+                fetchAmmo();
+            }, [data]);
+
+            return (
+                <div className="space-y-6">
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                        <StatBox label="Level" value={data.Level || 0} />
+                        <StatBox label="Power Cost" value={data.PvE?.PowerCost || data.PowerCost || 0} />
+                        <StatBox label="Range" value={data.PvE?.Range || data.Range || 0} />
+                        <StatBox label="Cooldown" value={`${data.ResetTime || 0}s`} />
+                        <StatBox label="Skill" value={data.Skill || "General"} onClick={data.Skill ? () => onNavigate('skills', data.Skill) : undefined} />
+                    </div>
+                    <div className="bg-slate-800/30 p-4 rounded border border-slate-700/50">
+                        <h4 className="text-sm font-bold text-indigo-400 mb-3 flex items-center gap-2"><Icon name="sword" className="w-4 h-4" /> Combat (PvE)</h4>
+                        <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
+                            <div className="flex justify-between border-b border-slate-700/30 pb-1"><span className="text-slate-400">Damage</span><span className="text-slate-200">{data.PvE?.Damage || 0}</span></div>
+                            <div className="flex justify-between border-b border-slate-700/30 pb-1"><span className="text-slate-400">Type</span><span className="text-slate-200">{data.DamageType || "Phys"}</span></div>
+                            <div className="flex justify-between border-b border-slate-700/30 pb-1"><span className="text-slate-400">Cast</span><span className="text-slate-200">{data.CastingTime || 0}s</span></div>
+                            <div className="flex justify-between border-b border-slate-700/30 pb-1"><span className="text-slate-400">Rage</span><span className="text-slate-200">{data.PvE?.RageBoost || 0}</span></div>
+                        </div>
+                    </div>
+                    {data.ItemsConsumed && (
+                        <div className="bg-slate-800/30 p-4 rounded border border-slate-700/50">
+                            <h4 className="text-sm font-bold text-amber-400 mb-3 flex items-center gap-2"><Icon name="flask-conical" className="w-4 h-4" /> Reagents</h4>
+                            <ul className="space-y-2">
+                                {data.ItemsConsumed.map((item, i) => {
+                                    const info = reagentNames[item.ItemCode];
+                                    return (
+                                        <li key={i} className="flex justify-between items-center text-sm p-2 bg-slate-900/30 rounded">
+                                            <button onClick={() => onNavigate('items', item.ItemCode)} className="flex items-center gap-2 text-slate-300 hover:text-amber-400 hover:underline">
+                                                <GameIcon iconId={info?.iconId} size="w-6 h-6" /> {info?.name || item.ItemCode}
+                                            </button>
+                                            <span className="font-mono text-amber-400">x{item.StackSize || 1}</span>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        </div>
+                    )}
+                    {data.Keywords && <div className="flex flex-wrap gap-1.5">{data.Keywords.map(k => <Badge key={k} color="amber">{k}</Badge>)}</div>}
+                    <ReferenceList title="Referenced By" refs={referencedBy} onNavigate={onNavigate} />
+                </div>
+            );
+        };
+
+        const SkillDetail = ({ data, onNavigate, referencedBy }) => {
+            const [rewards, setRewards] = useState([]);
+            const [filteredRefs, setFilteredRefs] = useState([]);
+            const [skillAbilities, setSkillAbilities] = useState([]);
+            const [skillRecipes, setSkillRecipes] = useState([]);
+
+            useEffect(() => {
+                const process = async () => {
+                    if (!data.Rewards) { setRewards([]); setFilteredRefs(referencedBy || []); return; }
+                    const levels = Object.keys(data.Rewards).sort((a, b) => parseInt(a) - parseInt(b));
+                    const processed = [];
+                    const idSet = new Set();
+
+                    const norm = (p, s) => {
+                        const l = [];
+                        if (p && Array.isArray(p)) l.push(...p);
+                        if (s) (Array.isArray(s) ? l.push(...s) : l.push(s));
+                        return l;
+                    };
+
+                    const lookupRequests = [];
+                    for (const lvl of levels) {
+                        const r = data.Rewards[lvl];
+                        const abs = norm(r.Abilities, r.Ability);
+                        abs.forEach(id => lookupRequests.push({ type: 'abilities', id }));
+                        const recs = norm(r.Recipes, r.Recipe);
+                        recs.forEach(id => lookupRequests.push({ type: 'recipes', id }));
+                    }
+
+                    const uniqueKeys = new Set(lookupRequests.map(r => `${r.type}:${r.id}`));
+                    const objectMap = new Map();
+                    await Promise.all(Array.from(uniqueKeys).map(async (key) => {
+                        const [type, rawId] = key.split(':');
+                        let qId = rawId;
+                        if (typeof rawId === 'string' && rawId.match(/^\d+$/)) qId = parseInt(rawId);
+                        let obj = await db.objects.get({ type, id: qId });
+                        if (!obj && typeof rawId === 'string') {
+                             const matches = await db.objects.where('type').equals(type).filter(o => o.data.InternalName === rawId || o.name === rawId).toArray();
+                             if (matches.length > 0) obj = matches[0];
+                        }
+                        if (obj) objectMap.set(key, obj);
+                    }));
+
+                    for (const lvl of levels) {
+                        const r = data.Rewards[lvl];
+                        const entries = [];
+                        const abs = norm(r.Abilities, r.Ability);
+                        for (const rid of abs) {
+                            const key = `abilities:${rid}`;
+                            const ab = objectMap.get(key);
+                            const finalId = ab ? ab.id : rid;
+                            idSet.add(`abilities:${finalId}`);
+                            entries.push({ type: 'link', target: 'abilities', id: finalId, label: 'Unlock Ability', name: ab ? ab.name : rid, color: 'text-indigo-400', icon: ab?.data?.IconId || ab?.data?.IconID });
+                        }
+                        const recs = norm(r.Recipes, r.Recipe);
+                        for (const rid of recs) {
+                            const key = `recipes:${rid}`;
+                            const rc = objectMap.get(key);
+                            const finalId = rc ? rc.id : rid;
+                            idSet.add(`recipes:${finalId}`);
+                            entries.push({ type: 'link', target: 'recipes', id: finalId, label: 'Unlock Recipe', name: rc ? rc.name : rid, color: 'text-emerald-400', icon: rc?.data?.IconId || rc?.data?.IconID });
+                        }
+                        if (r.Notes) entries.push({ type: 'text', text: r.Notes, color: 'text-slate-400' });
+                        const skip = ['Abilities', 'Ability', 'Recipes', 'Recipe', 'Notes'];
+                        Object.entries(r).forEach(([k, v]) => {
+                            if (!skip.includes(k)) {
+                                if (k === 'BonusToSkill') {
+                                    const txt = (typeof v === 'string') ? `+1 ${v}` : `+${v === true ? 1 : v} ${data.Name || 'Skill'}`;
+                                    entries.push({ type: 'text', text: txt, color: 'text-amber-300 font-bold' });
+                                } else {
+                                    entries.push({ type: 'text', text: `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`, color: 'text-amber-200' });
+                                }
+                            }
+                        });
+                        if (entries.length > 0) processed.push({ level: lvl, entries });
+                    }
+                    setRewards(processed);
+                    if (referencedBy) {
+                        setFilteredRefs(referencedBy.filter(ref => !idSet.has(`${ref.type}:${ref.id}`)));
+                    }
+                };
+                process();
+            }, [data, referencedBy]);
+
+            useEffect(() => {
+                if (!referencedBy) return;
+                const abs = referencedBy.filter(r => r.type === 'abilities');
+                const recs = referencedBy.filter(r => r.type === 'recipes');
+                setSkillAbilities(abs);
+                setSkillRecipes(recs);
+            }, [data, referencedBy]);
+
+            return (
+                <div className="space-y-8 pb-24">
+                    <div className="grid grid-cols-2 gap-3">
+                        <StatBox label="Combat?" value={data.Combat ? "Yes" : "No"} />
+                        <StatBox label="Max Level" value={data.MaxLevel || 100} />
+                    </div>
+
+                    {rewards.length > 0 && (
+                        <div className="bg-slate-800/40 rounded border border-slate-700/50 overflow-hidden">
+                            <div className="p-3 border-b border-slate-700/50 bg-slate-900/50">
+                                <h4 className="text-sm font-bold text-slate-200 flex items-center gap-2"><Icon name="trending-up" className="w-4 h-4 text-indigo-400" /> Progression Rewards</h4>
+                            </div>
+                            <div className="divide-y divide-slate-800/50">
+                                {rewards.map(e => (
+                                    <div key={e.level} className="p-4 flex gap-4">
+                                        <div className="shrink-0 w-12 text-center">
+                                            <div className="text-[10px] font-bold text-slate-500 uppercase">Lvl</div>
+                                            <div className="text-lg font-bold text-white">{e.level}</div>
+                                        </div>
+                                        <div className="flex-1 space-y-2">
+                                            {e.entries.map((u, i) => u.type === 'link' ? (
+                                                <button key={i} onClick={() => onNavigate(u.target, u.id)} className="group w-full bg-slate-900/60 p-2 rounded border border-slate-700/50 hover:border-indigo-500 flex items-center gap-3 text-left transition-all">
+                                                    <GameIcon iconId={u.icon} size="w-8 h-8" />
+                                                    <div className="min-w-0">
+                                                        <div className={`text-[10px] font-bold uppercase ${u.color}`}>{u.label}</div>
+                                                        <div className="text-sm text-slate-200 truncate">{u.name}</div>
+                                                    </div>
+                                                </button>
+                                            ) : (
+                                                <div key={i} className={`text-sm ${u.color} pl-1`}>{u.text}</div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {skillAbilities.length > 0 && <ReferenceList title="All Abilities" refs={skillAbilities} onNavigate={onNavigate} />}
+                    {skillRecipes.length > 0 && <ReferenceList title="All Recipes" refs={skillRecipes} onNavigate={onNavigate} />}
+                    {filteredRefs.filter(r => r.type !== 'abilities' && r.type !== 'recipes').length > 0 && (
+                         <ReferenceList title="Purchased / Found" refs={filteredRefs.filter(r => r.type !== 'abilities' && r.type !== 'recipes')} onNavigate={onNavigate} />
+                    )}
+                </div>
+            );
+        };
+
+        const TreasureDetail = ({ data, onNavigate }) => {
+            const handleSkillClick = async () => {
+                if (!data.Skill) return;
+                const skills = await db.objects.where('type').equals('skills').filter(s => s.name === data.Skill).toArray();
+                if (skills.length > 0) onNavigate('skills', skills[0].id);
+            };
+
+            return (
+                <div className="space-y-6 pb-24">
+                    <div className="grid grid-cols-2 gap-3">
+                        <StatBox label="Slot" value={data.EquipSlot || "Unknown"} />
+                         <StatBox 
+                            label="Skill" 
+                            value={data.Skill || "Unknown"} 
+                            onClick={(data.Skill && data.Skill !== 'Unknown' && data.Skill !== 'AnySkill') ? handleSkillClick : undefined}
+                        />
+                    </div>
+                    {data.Tiers && data.Tiers.length > 0 && (
+                         <div className="bg-slate-800/30 rounded border border-slate-700/50 overflow-hidden">
+                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4">
+                                {data.Tiers.map((tier, i) => (
+                                    <div key={i} className="bg-slate-900/50 p-4 rounded border border-slate-700/50 flex flex-col">
+                                        <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-700/30">
+                                            <span className="text-xs font-bold text-slate-500 uppercase">Tier {i + 1}</span>
+                                            <span className="text-xs font-mono text-slate-400">Lvl {tier.SkillLevelPrereq}</span>
+                                        </div>
+                                        <div className="text-sm text-emerald-300 leading-snug">
+                                            {tier.EffectDescs && tier.EffectDescs.map((d, idx) => (
+                                                <div key={idx}>{d}</div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const GenericDetail = ({ data, referencedBy, onNavigate }) => (
+            <div className="space-y-6 pb-24">
+                <div className="bg-slate-800/40 rounded p-4 border border-slate-700/50">
+                    <div className="grid grid-cols-2 gap-3">
+                        {Object.entries(data).slice(0, 8).map(([k, v]) => {
+                            if (typeof v !== 'object' && !k.includes('Desc') && !k.includes('Name') && !k.includes('Tiers')) return <StatBox key={k} label={k} value={v} />;
+                            return null;
+                        })}
+                    </div>
+                </div>
+                <ReferenceList title="Referenced By" refs={referencedBy} onNavigate={onNavigate} />
+            </div>
+        );
+
+        // ==========================================
+        // 4. MAIN VIEW COMPONENTS
+        // ==========================================
+
+        const NpcServicesView = ({ onNavigate }) => {
+            const [npcData, setNpcData] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                const fetchData = async () => {
+                    setLoading(true);
+                    try {
+                        const vaults = await db.objects.where('type').equals('storagevaults').toArray();
+                        const npcs = await db.objects.where('type').equals('npcs').toArray();
+                        const areas = await db.objects.where('type').equals('areas').toArray();
+                        
+                        const npcMap = {};
+                        npcs.forEach(npc => {
+                            npcMap[npc.id] = npc;
+                            if (npc.data.InternalName) npcMap[npc.data.InternalName] = npc;
+                        });
+
+                        const areaMap = {};
+                        areas.forEach(a => areaMap[a.id] = a.name);
+                        
+                        const cleanLocation = (loc) => {
+                            if (!loc) return "Unknown";
+                            let name = loc.replace(/^Area_?/i, '');
+                            if (name === 'Serbule2') return 'Serbule Hills';
+                            if (!name.includes(' ')) name = name.replace(/([A-Z])/g, ' $1').trim();
+                            return name;
+                        };
+
+                        const storageRows = [];
+                        for (const vault of vaults) {
+                            const d = vault.data;
+                            let npcName = d.NpcFriendlyName; 
+                            if (d.Levels) {
+                                let location = "Unknown";
+                                let matchedNpc = null;
+                                if (npcName) matchedNpc = npcs.find(n => n.name === npcName);
+                                if (matchedNpc && matchedNpc.data.AreaName) location = matchedNpc.data.AreaName;
+                                else if (matchedNpc && matchedNpc.data.AreaId) location = areaMap[matchedNpc.data.AreaId] || matchedNpc.data.AreaId;
+
+                                const row = {
+                                    name: npcName || vault.name,
+                                    location: cleanLocation(location),
+                                    slots: {}
+                                };
+
+                                Object.entries(d.Levels).forEach(([favor, stats]) => {
+                                    let count = 0;
+                                    if (typeof stats === 'number') count = stats;
+                                    else if (stats.Slots) count = stats.Slots;
+                                    if (count > 0) row.slots[favor] = count;
+                                });
+                                storageRows.push(row);
+                            }
+                        }
+                        storageRows.sort((a, b) => (a.location + a.name).localeCompare(b.location + b.name));
+                        setNpcData(storageRows);
+                    } catch (e) { console.error(e); } finally { setLoading(false); }
+                };
+                fetchData();
+            }, []);
+
+            if (loading) return <div className="h-full flex items-center justify-center text-slate-500"><Icon name="loader-2" className="w-8 h-8 animate-spin" /></div>;
+
+            return (
+                <div className="p-4 md:p-8 pb-32 h-full overflow-hidden flex flex-col gap-8">
+                    <div className="flex flex-col h-full min-h-[300px]">
+                         <div className="shrink-0 mb-4">
+                            <h2 className="text-2xl font-light text-white mb-1">NPC Storage</h2>
+                            <p className="text-slate-400 text-xs">Storage slots unlocked by favor.</p>
+                        </div>
+                        <div className="flex-1 overflow-auto border border-slate-700 rounded-xl bg-slate-900/50 shadow-sm">
+                            <table className="w-full text-left text-sm border-collapse">
+                                <thead className="bg-slate-800 text-slate-400 sticky top-0 z-20 shadow-md">
+                                    <tr>
+                                        <th className="p-3 font-semibold border-b border-slate-700 sticky-col bg-slate-800 min-w-[140px] z-30">NPC</th>
+                                        {FAVOR_LEVELS.map(level => (
+                                            <th key={level} className="p-3 font-semibold border-b border-slate-700 min-w-[80px] text-center text-[10px] uppercase tracking-wider">{level.replace(/([A-Z])/g, ' $1').trim()}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-700/50">
+                                    {npcData.map((row, i) => (
+                                        <tr key={i} className="hover:bg-slate-800/30 transition-colors group">
+                                            <td className="p-3 font-medium text-slate-200 sticky-col bg-slate-950 group-hover:bg-slate-900 transition-colors border-r border-slate-800 z-10">
+                                                <div className="text-white text-xs">{row.name}</div>
+                                                <div className="text-[9px] text-slate-500 uppercase tracking-wider mt-0.5 flex items-center gap-1">
+                                                    <Icon name="map-pin" className="w-2.5 h-2.5" /> {row.location}
+                                                </div>
+                                            </td>
+                                            {FAVOR_LEVELS.map(level => (
+                                                <td key={level} className="p-3 text-center text-slate-400">
+                                                    {row.slots[level] ? (
+                                                        <span className="font-bold text-emerald-400 bg-emerald-900/20 px-2 py-0.5 rounded text-xs">{row.slots[level]}</span>
+                                                    ) : <span className="text-slate-800">-</span>}
+                                                </td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const BookmarksView = ({ onNavigate }) => {
+            const [bookmarks, setBookmarks] = useState([]);
+            const [items, setItems] = useState([]);
+            
+            useEffect(() => {
+                const stored = localStorage.getItem('stone_eye_bookmarks');
+                if (stored) {
+                    const parsed = JSON.parse(stored);
+                    setBookmarks(parsed);
+                    
+                    if (parsed.length > 0) {
+                        Promise.all(parsed.map(b => db.objects.get({ type: b.type, id: b.id })))
+                            .then(res => setItems(res.filter(Boolean)));
+                    } else {
+                        setItems([]);
+                    }
+                }
+            }, []);
+            
+            return (
+                <div className="p-4 md:p-8 pb-32">
+                      <h2 className="text-2xl md:text-3xl font-light text-white mb-2">Bookmarks</h2>
+                      <p className="text-slate-400 mb-6 text-sm">Your pinned items and recipes.</p>
+                      
+                      {items.length === 0 ? (
+                          <div className="text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                              <Icon name="star" className="w-12 h-12 mb-4 mx-auto opacity-20" />
+                              <p>No bookmarks yet.</p>
+                              <p className="text-xs mt-2">Click the star icon on any item to pin it here.</p>
+                          </div>
+                      ) : (
+                          <div className="space-y-2">
+                            {items.map(obj => (
+                                <ResultRow key={`${obj.type}-${obj.id}`} obj={obj} onClick={() => onNavigate(obj.type, obj.id)} />
+                            ))}
+                          </div>
+                      )}
+                </div>
+            );
+        };
+
+        const MyCharacterView = ({ onNavigate }) => {
+            const [activeTab, setActiveTab] = useState('stats');
+            const [charData, setCharData] = useState(null);
+            const [selectedCharId, setSelectedCharId] = useState(null);
+            const [availableChars, setAvailableChars] = useState([]);
+            const [inventory, setInventory] = useState([]);
+            const [skills, setSkills] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [filter, setFilter] = useState('');
+            const [sortConfig, setSortConfig] = useState({ key: 'Name', direction: 'asc' });
+            const [netWorth, setNetWorth] = useState(0);
+            const [showAllInventory, setShowAllInventory] = useState(false);
+            const [storageFilter, setStorageFilter] = useState(null);
+            const [storageMeta, setStorageMeta] = useState({});
+            const [encumbrance, setEncumbrance] = useState({ used: 0, shared: 0 });
+            const [questStats, setQuestStats] = useState({});
+            const [showQuestList, setShowQuestList] = useState(false);
+
+            useEffect(() => {
+                const loadChars = () => {
+                    const chars = new Set();
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        if (key.startsWith('gorgon_character_')) {
+                            chars.add(key.replace('gorgon_character_', ''));
+                        }
+                        if (key.startsWith('gorgon_inventory_')) {
+                            chars.add(key.replace('gorgon_inventory_', ''));
+                        }
+                    }
+                    const charList = Array.from(chars).sort();
+                    setAvailableChars(charList);
+                    if (charList.length > 0 && !selectedCharId) {
+                        setSelectedCharId(charList[0]);
+                    }
+                    setLoading(false);
+                };
+                loadChars();
+            }, []);
+
+            useEffect(() => {
+                if (!selectedCharId && !showAllInventory) return;
+                setLoading(true);
+
+                const loadData = async () => {
+                    try {
+                        const vaults = await db.objects.where('type').equals('storagevaults').toArray();
+                        const npcs = await db.objects.where('type').equals('npcs').toArray();
+                        const vaultMap = {};
+                        vaults.forEach(v => {
+                            if (v.data.NpcFriendlyName) vaultMap[`NPC_${v.data.NpcFriendlyName}`] = v.data;
+                            if (v.name) vaultMap[v.name] = v.data; 
+                        });
+
+                        let currentCharData = null;
+
+                        if (selectedCharId) {
+                            const cStr = localStorage.getItem(`gorgon_character_${selectedCharId}`);
+                            currentCharData = cStr ? JSON.parse(cStr) : null;
+
+                            if (currentCharData) {
+                                setCharData(currentCharData.data);
+                                const allStaticAbilities = await db.objects.where('type').equals('abilities').toArray();
+                                const abilityCounts = {}; 
+                                allStaticAbilities.forEach(ab => {
+                                    if (ab.data.Skill) {
+                                        abilityCounts[ab.data.Skill] = (abilityCounts[ab.data.Skill] || 0) + 1;
+                                    }
+                                });
+
+                                const allStaticSkills = await db.objects.where('type').equals('skills').toArray();
+                                const skillMap = new Map();
+                                allStaticSkills.forEach(s => {
+                                    skillMap.set(s.name, s);
+                                    skillMap.set(s.id, s);
+                                    if(s.data.InternalName) skillMap.set(s.data.InternalName, s);
+                                });
+
+                                const skillList = [];
+                                if (currentCharData.data.Skills) {
+                                     for (const [name, data] of Object.entries(currentCharData.data.Skills)) {
+                                         if (name.toLowerCase().includes('internal')) continue;
+                                         
+                                         let icon = 5005;
+                                         let dbId = null;
+                                         const match = skillMap.get(name) || skillMap.get(`Skill_${name}`);
+                                         
+                                         if(match) {
+                                             icon = match.derivedIcon || match.data.IconId || match.data.IconID;
+                                             dbId = match.id;
+                                         }
+                                         
+                                         let abilitiesLearned = 0;
+                                         if (data.Abilities) {
+                                             abilitiesLearned = data.Abilities.length;
+                                         }
+                                         
+                                         let abilitiesAvailable = 0;
+                                         abilitiesAvailable = allStaticAbilities.filter(ab => {
+                                             if (ab.name.toLowerCase().includes('internal')) return false;
+                                             const matchesSkill = ab.data.Skill === name || ab.data.Skill === `Skill_${name}`;
+                                             if (!matchesSkill) return false;
+                                             const reqLevel = ab.data.Level || 0;
+                                             return reqLevel <= data.Level;
+                                         }).length;
+                                         
+                                         if (abilitiesLearned > abilitiesAvailable) abilitiesAvailable = abilitiesLearned;
+
+                                         skillList.push({ 
+                                             name, 
+                                             level: data.Level, 
+                                             icon, 
+                                             id: dbId,
+                                             xpCurrent: data.XpTowardNextLevel || 0,
+                                             xpNext: data.XpNeededForNextLevel || 0,
+                                             abilitiesLearned,
+                                             abilitiesAvailable
+                                         });
+                                     }
+                                }
+                                setSkills(skillList.sort((a, b) => b.level - a.level));
+                            } else {
+                                setCharData(null);
+                                setSkills([]);
+                            }
+                        }
+
+                        let itemsToProcess = [];
+                        let targetChars = showAllInventory ? availableChars : [selectedCharId];
+                        const sharedVaultOwners = new Map();
+
+                        for (const charId of targetChars) {
+                            if (!charId) continue;
+                            const iStr = localStorage.getItem(`gorgon_inventory_${charId}`);
+                            if (iStr) {
+                                const iData = JSON.parse(iStr);
+                                if (iData && iData.data && iData.data.Items) {
+                                    const charItems = iData.data.Items.map(item => ({
+                                        ...item,
+                                        _owner: charId
+                                    }));
+                                    itemsToProcess = itemsToProcess.concat(charItems);
+                                }
+                            }
+                        }
+
+                        if (itemsToProcess.length > 0) {
+                            const knownRecipes = new Set();
+                            if (selectedCharId) {
+                                const cStr = localStorage.getItem(`gorgon_character_${selectedCharId}`);
+                                if (cStr) {
+                                    const cData = JSON.parse(cStr);
+                                    if (cData.data.RecipeCompletions) {
+                                         Object.keys(cData.data.RecipeCompletions).forEach(k => knownRecipes.add(k));
+                                    }
+                                }
+                            }
+
+                            const typeIds = new Set(itemsToProcess.map(i => i.TypeID));
+                            const itemMetaMap = {};
+                            for (const tid of typeIds) {
+                                 const staticItem = await db.objects.get({ type: 'items', id: tid });
+                                 if (staticItem) {
+                                     itemMetaMap[tid] = { 
+                                         icon: staticItem.data.IconId,
+                                         recipes: staticItem.data.Recipes 
+                                     };
+                                 }
+                            }
+                            
+                            let invValue = 0;
+                            const processedItems = [];
+                            const storageUsage = {}; 
+                            const storageCounts = { used: 0, shared: 0 };
+
+                            itemsToProcess.forEach(item => {
+                                let rawVaultName = (item.StorageVault || "Backpack").trim();
+                                if (rawVaultName === "") rawVaultName = "Backpack";
+                                
+                                let cleanId = rawVaultName.toLowerCase();
+                                if (cleanId.startsWith('npc_')) cleanId = cleanId.substring(4);
+                                
+                                const isShared = cleanId.includes('accountstorage') || cleanId.includes('transferchest');
+
+                                if (showAllInventory && isShared) {
+                                    if (!sharedVaultOwners.has(cleanId)) {
+                                        sharedVaultOwners.set(cleanId, item._owner);
+                                    }
+                                    if (sharedVaultOwners.get(cleanId) !== item._owner) {
+                                        return; 
+                                    }
+                                }
+
+                                if (isShared) {
+                                    storageCounts.shared++;
+                                } else if (item._owner === selectedCharId) {
+                                    storageCounts.used++;
+                                }
+
+                                const stackVal = (item.Value || 0) * (item.StackSize || 1);
+                                if (item._owner === selectedCharId) {
+                                    invValue += stackVal;
+                                }
+
+                                if (!storageUsage[rawVaultName]) {
+                                    storageUsage[rawVaultName] = { count: 0, max: 0, zone: 'Unknown', owner: item._owner };
+                                    const vData = vaultMap[rawVaultName];
+                                    if (vData) {
+                                        if (vData.NpcFriendlyName) {
+                                            const npc = npcs.find(n => n.name === vData.NpcFriendlyName);
+                                            if (npc && npc.data.AreaName) storageUsage[rawVaultName].zone = npc.data.AreaName.replace('Area_', '');
+                                        }
+                                        
+                                        if (vData.NumSlots > 0) {
+                                            storageUsage[rawVaultName].max = vData.NumSlots;
+                                        } 
+                                        else if (vData.Levels) {
+                                            if (currentCharData && currentCharData.data.NpcFavor) {
+                                                const npcName = vData.NpcFriendlyName;
+                                                const favorPoints = currentCharData.data.NpcFavor[npcName] || 0;
+                                                let level = "Neutral";
+                                                if (favorPoints >= 6000) level = "SoulMates";
+                                                else if (favorPoints >= 5000) level = "LikeFamily";
+                                                else if (favorPoints >= 4000) level = "BestFriends";
+                                                else if (favorPoints >= 3000) level = "CloseFriends";
+                                                else if (favorPoints >= 2000) level = "Friends";
+                                                else if (favorPoints >= 1000) level = "Comfortable";
+                                                
+                                                if (vData.Levels[level]) {
+                                                     storageUsage[rawVaultName].max = typeof vData.Levels[level] === 'object' ? vData.Levels[level].Slots : vData.Levels[level];
+                                                } else {
+                                                    const levels = ["Neutral", "Comfortable", "Friends", "CloseFriends", "BestFriends", "LikeFamily", "SoulMates"];
+                                                    let found = 0;
+                                                    for (const l of levels) {
+                                                        if (vData.Levels[l]) found = typeof vData.Levels[l] === 'object' ? vData.Levels[l].Slots : vData.Levels[l];
+                                                        if (l === level) break;
+                                                    }
+                                                    storageUsage[rawVaultName].max = found;
+                                                }
+                                            }
+
+                                            if (storageUsage[rawVaultName].max === 0) {
+                                                let absoluteMax = 0;
+                                                Object.values(vData.Levels).forEach(val => {
+                                                    const s = typeof val === 'object' ? val.Slots : val;
+                                                    if (s > absoluteMax) absoluteMax = s;
+                                                });
+                                                storageUsage[rawVaultName].max = absoluteMax;
+                                            }
+                                        }
+                                    } else {
+                                        if (rawVaultName.startsWith("AccountStorage_")) {
+                                            storageUsage[rawVaultName].zone = rawVaultName.replace("AccountStorage_", "");
+                                        }
+                                    }
+                                }
+                                storageUsage[rawVaultName].count++;
+
+                                let isLearnable = false;
+                                const meta = itemMetaMap[item.TypeID];
+                                if (meta && meta.recipes) {
+                                    isLearnable = meta.recipes.some(r => !knownRecipes.has(r));
+                                }
+
+                                let displayLoc = rawVaultName.replace(/^NPC_/, '');
+                                if (showAllInventory) {
+                                    if (isShared) {
+                                        displayLoc = `${displayLoc} (Shared)`;
+                                    } else if (item._owner) {
+                                        displayLoc = `${displayLoc} (${item._owner})`;
+                                    }
+                                }
+
+                                processedItems.push({
+                                    ...item,
+                                    icon: meta ? meta.icon : null,
+                                    totalValue: stackVal,
+                                    isLearnable: isLearnable,
+                                    displayLoc: displayLoc || "Unknown",
+                                    rawVault: rawVaultName
+                                });
+                            });
+                            
+                            if (currentCharData) {
+                                const gold = currentCharData.data.Currencies.GOLD || currentCharData.data.Currencies.Gold || 0;
+                                setNetWorth(gold + invValue);
+                            }
+                            
+                            setInventory(processedItems);
+                            setStorageMeta(storageUsage);
+                            setEncumbrance(storageCounts);
+                        } else {
+                            setInventory([]);
+                            setNetWorth(0);
+                            setStorageMeta({});
+                            setEncumbrance({ used: 0, shared: 0 });
+                        }
+
+                        // --- Quest Processing ---
+                        if (currentCharData && currentCharData.data.ActiveQuests) {
+                            const allQuests = await db.objects.where('type').equals('quests').toArray();
+                            const npcs = await db.objects.where('type').equals('npcs').toArray();
+                            
+                            const npcToArea = {};
+                            npcs.forEach(n => {
+                                const area = n.data.AreaName || n.data.AreaId;
+                                if (area) {
+                                    if (n.id) npcToArea[n.id] = area;
+                                    if (n.data.InternalName) npcToArea[n.data.InternalName] = area;
+                                    if (n.name) npcToArea[n.name] = area;
+                                }
+                            });
+
+                            const questToZone = {};
+                            allQuests.forEach(q => {
+                                let z = q.data.Area || q.data.Zone;
+                                if (!z && q.data.Giver) {
+                                    z = npcToArea[q.data.Giver];
+                                }
+                                if (z) questToZone[q.name] = z;
+                            });
+
+                            const zoneCounts = {};
+                            currentCharData.data.ActiveQuests.forEach(qName => {
+                                let rawZone = questToZone[qName] || "Unknown";
+                                let cleanZone = rawZone.replace(/^Area_/i, '').replace(/([A-Z])/g, ' $1').trim();
+                                if (cleanZone === 'Serbule2') cleanZone = 'Serbule Hills'; 
+                                zoneCounts[cleanZone] = (zoneCounts[cleanZone] || 0) + 1;
+                            });
+                            setQuestStats(zoneCounts);
+                        } else {
+                            setQuestStats({});
+                        }
+
+                    } catch (err) {
+                        console.error("Error loading char data", err);
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+                loadData();
+            }, [selectedCharId, showAllInventory, availableChars]);
+
+            const handleSort = (key) => {
+                let direction = 'asc';
+                if (sortConfig.key === key && sortConfig.direction === 'asc') {
+                    direction = 'desc';
+                }
+                setSortConfig({ key, direction });
+            };
+
+            const sortedInventory = useMemo(() => {
+                let sortableItems = [...inventory];
+                if (storageFilter) {
+                    sortableItems = sortableItems.filter(i => i.rawVault === storageFilter);
+                }
+                if (sortConfig.key !== null) {
+                    sortableItems.sort((a, b) => {
+                        let valA = sortConfig.key === 'displayLoc' ? a.displayLoc : a[sortConfig.key];
+                        let valB = sortConfig.key === 'displayLoc' ? b.displayLoc : b[sortConfig.key];
+                        
+                        if (typeof valA === 'string') valA = valA.toLowerCase();
+                        if (typeof valB === 'string') valB = valB.toLowerCase();
+                        
+                        if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+                        if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+                        return 0;
+                    });
+                }
+                return sortableItems.filter(i => i.Name.toLowerCase().includes(filter.toLowerCase()));
+            }, [inventory, sortConfig, filter, storageFilter]);
+
+            if (loading) return <div className="h-full flex items-center justify-center text-slate-500"><Icon name="loader-2" className="w-8 h-8 animate-spin" /></div>;
+            if (availableChars.length === 0) return <div className="p-8 text-center text-slate-500">No characters found. Import your JSON files.</div>;
+
+            const formatCurrency = (key) => {
+                if (key === 'GOLD') return 'Gold';
+                if (key === 'GUILDCREDITS') return 'Guild Credits';
+                return key.replace(/([A-Z]+)/g, (match) => match.charAt(0) + match.slice(1).toLowerCase()).replace(/_/g, ' ');
+            };
+
+            const storageByZone = {};
+            const cleanZoneName = (name) => {
+                if (!name || name === 'Unknown') return "Special Storage";
+                let cleaned = name.replace(/^Area_?/i, '');
+                if (cleaned === 'Serbule2') return 'Serbule Hills';
+                cleaned = cleaned.replace(/([A-Z])/g, ' $1').trim();
+                return cleaned;
+            };
+
+            Object.entries(storageMeta).forEach(([key, data]) => {
+                const zone = cleanZoneName(data.zone);
+                if (!storageByZone[zone]) storageByZone[zone] = [];
+                storageByZone[zone].push({ id: key, ...data });
+            });
+
+            return (
+                <div className="p-4 md:p-8 pb-32 h-full flex flex-col">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+                        <div className="flex items-center gap-4">
+                            <h2 className="text-2xl font-light text-white">My Character:</h2>
+                            <select 
+                                value={selectedCharId} 
+                                onChange={(e) => setSelectedCharId(e.target.value)}
+                                className="bg-slate-800 border border-slate-700 rounded px-3 py-1 text-slate-200 focus:outline-none focus:border-indigo-500"
+                            >
+                                {availableChars.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                        </div>
+                        <div className="flex bg-slate-800 rounded p-1 gap-1 self-start md:self-auto">
+                            <button onClick={()=>setActiveTab('stats')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='stats'?'bg-indigo-600 text-white':'text-slate-400'}`}>Stats</button>
+                            <button onClick={()=>setActiveTab('skills')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='skills'?'bg-indigo-600 text-white':'text-slate-400'}`}>Skills</button>
+                            <button onClick={()=>setActiveTab('storage')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='storage'?'bg-indigo-600 text-white':'text-slate-400'}`}>Storage</button>
+                            <button onClick={()=>setActiveTab('inventory')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='inventory'?'bg-indigo-600 text-white':'text-slate-400'}`}>Inventory</button>
+                        </div>
+                    </div>
+
+                    {activeTab === 'stats' && charData && (
+                        <div className="space-y-6 overflow-y-auto">
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <div className="bg-slate-800/50 p-4 rounded border border-slate-700">
+                                    <div className="text-xs uppercase text-slate-500 mb-2 font-bold">Currencies</div>
+                                    <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                                        <div className="col-span-2 flex justify-between text-sm pb-2 mb-2 border-b border-slate-700/50">
+                                            <span className="text-emerald-400 font-bold">Net Worth</span>
+                                            <span className="text-white font-bold">{netWorth.toLocaleString()}</span>
+                                        </div>
+                                        {Object.entries(charData.Currencies).map(([key, val]) => (
+                                            <div key={key} className="flex justify-between text-sm">
+                                                <span className="text-slate-400">{formatCurrency(key)}</span>
+                                                <span className="text-slate-200">{val.toLocaleString()}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="bg-slate-800/50 p-4 rounded border border-slate-700 h-fit">
+                                    <div className="text-xs uppercase text-slate-500 mb-2 font-bold">Vitals</div>
+                                    <div className="space-y-1">
+                                        <div className="flex justify-between text-sm"><span className="text-red-400">Health</span> <span>{charData.CurrentStats.MAX_HEALTH}</span></div>
+                                        <div className="flex justify-between text-sm"><span className="text-blue-400">Power</span> <span>{charData.CurrentStats.MAX_POWER}</span></div>
+                                        <div className="flex justify-between text-sm"><span className="text-slate-300">Armor</span> <span>{charData.CurrentStats.MAX_ARMOR}</span></div>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-800/50 p-4 rounded border border-slate-700 h-fit">
+                                    <div className="text-xs uppercase text-slate-500 mb-2 font-bold">Encumbrance</div>
+                                    <div className="space-y-1">
+                                        <div className="flex justify-between text-sm"><span className="text-slate-300">Used</span> <span>{encumbrance.used}</span></div>
+                                        <div className="flex justify-between text-sm"><span className="text-indigo-300">Shared Storage</span> <span>{encumbrance.shared}</span></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="bg-slate-800/30 p-4 rounded border border-slate-700">
+                                <div className="flex justify-between items-center mb-2">
+                                    <div className="text-xs uppercase text-slate-500 font-bold">Total Active Quests</div>
+                                    <div className="text-xl font-bold text-white">{charData.ActiveQuests ? charData.ActiveQuests.length : 0}</div>
+                                </div>
+                                
+                                <div className="border-t border-slate-700/50 pt-2">
+                                    <button 
+                                        onClick={() => setShowQuestList(!showQuestList)}
+                                        className="w-full flex justify-between items-center text-xs font-bold text-slate-400 hover:text-white uppercase tracking-wider py-2"
+                                    >
+                                        <span>Details</span>
+                                        <Icon name={showQuestList ? "chevron-up" : "chevron-down"} className="w-4 h-4" />
+                                    </button>
+                                    
+                                    {showQuestList && (
+                                        <div className="flex flex-wrap gap-2 mt-2 animate-in fade-in slide-in-from-top-2">
+                                            {charData.ActiveQuests && charData.ActiveQuests.map(q => <span key={q} className="px-2 py-1 bg-slate-900 rounded text-xs text-slate-300 border border-slate-800">{q}</span>)}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'skills' && (
+                        <div className="overflow-y-auto h-full">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                                {skills.map(s => {
+                                    let xpProgress = 0;
+                                    let abilityProgress = 0;
+                                    const isMax = s.xpNext <= 0;
+                                    
+                                    if (!isMax) {
+                                        xpProgress = (s.xpCurrent / s.xpNext) * 100;
+                                    } else {
+                                        xpProgress = 100;
+                                    }
+                                    
+                                    if (s.abilitiesAvailable > 0) {
+                                        abilityProgress = (s.abilitiesLearned / s.abilitiesAvailable) * 100;
+                                    }
+
+                                    return (
+                                        <div 
+                                            key={s.name} 
+                                            onClick={() => s.id && onNavigate('skills', s.id)}
+                                            className={`relative h-16 rounded overflow-hidden cursor-pointer group transition-all hover:scale-[1.02] flex 
+                                                ${isMax 
+                                                    ? 'border-2 border-amber-400/70 shadow-[0_0_10px_rgba(251,191,36,0.15)] bg-slate-800/90' 
+                                                    : 'border border-slate-700 hover:border-indigo-500 bg-slate-800/50'}`}
+                                        >
+                                            <div className="flex-1 relative border-r border-slate-700/50">
+                                                <div 
+                                                    className={`absolute top-0 left-0 h-full transition-all duration-500 ${isMax ? 'bg-amber-500/20' : 'bg-indigo-600/60'}`} 
+                                                    style={{ width: `${xpProgress}%` }} 
+                                                />
+                                                
+                                                <div className="relative z-10 flex items-center gap-3 p-2 h-full">
+                                                    <div className="shrink-0">
+                                                        <GameIcon iconId={s.icon} size="w-10 h-10" className={`shadow-sm ${isMax ? 'ring-1 ring-amber-400/50 rounded' : ''}`} />
+                                                    </div>
+                                                    <div className="min-w-0 flex-1 flex flex-col justify-center">
+                                                        <div className="flex justify-between items-baseline">
+                                                            <div className={`text-sm font-bold truncate pr-2 ${isMax ? 'text-amber-100' : 'text-white'}`}>{s.name}</div>
+                                                            <div className={`text-xs font-bold ${isMax ? 'text-amber-400' : 'text-indigo-200'}`}>Lvl {s.level}</div>
+                                                        </div>
+                                                        <div className="text-[10px] text-slate-300 font-mono mt-0.5">
+                                                            {!isMax ? (
+                                                                <span className="opacity-80">{s.xpCurrent.toLocaleString()} / {s.xpNext.toLocaleString()}</span>
+                                                            ) : (
+                                                                <span className="text-amber-300 font-bold tracking-wider text-[9px]">MAX LEVEL</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="w-10 bg-slate-900/50 flex flex-col justify-end items-center relative">
+                                                <div 
+                                                    className="absolute bottom-0 left-0 w-full bg-emerald-500/40 transition-all duration-500"
+                                                    style={{ height: `${abilityProgress}%` }}
+                                                />
+                                                {s.abilitiesAvailable > 0 && (
+                                                    <div className="relative z-10 text-[9px] font-mono text-emerald-200 font-bold mb-1 text-center leading-tight">
+                                                        <div>{s.abilitiesLearned}</div>
+                                                        <div className="border-t border-emerald-500/30 w-full"></div>
+                                                        <div>{s.abilitiesAvailable}</div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'storage' && (
+                        <div className="flex flex-col h-full overflow-hidden">
+                            {storageFilter ? (
+                                <div className="flex flex-col h-full">
+                                     <div className="flex gap-2 mb-4 shrink-0">
+                                        <button 
+                                            onClick={() => setStorageFilter(null)}
+                                            className="bg-indigo-600 text-white px-3 rounded text-xs font-bold flex items-center gap-2 hover:bg-indigo-500"
+                                        >
+                                            <Icon name="arrow-left" className="w-3 h-3" /> Back
+                                        </button>
+                                        <div className="flex-1 text-sm font-bold text-slate-200 flex items-center bg-slate-800 px-3 rounded">
+                                            {storageFilter.replace('NPC_', '').replace('AccountStorage_', 'Shared ')}
+                                        </div>
+                                     </div>
+                                     <div className="flex-1 overflow-y-auto">
+                                        <table className="w-full text-left text-sm">
+                                            <thead className="text-slate-500 text-xs uppercase bg-slate-900 sticky top-0 z-10">
+                                                <tr>
+                                                    <th className="p-2">Item</th>
+                                                    <th className="p-2 text-right">Qty</th>
+                                                    <th className="p-2 text-right">Value</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-800">
+                                                {sortedInventory.map((item, i) => (
+                                                    <tr key={i} className="hover:bg-slate-800/30">
+                                                        <td className="p-2 flex items-center gap-2">
+                                                            <button onClick={() => onNavigate('items', item.TypeID)} className="shrink-0 hover:opacity-80">
+                                                                <GameIcon iconId={item.icon} size="w-6 h-6" />
+                                                            </button>
+                                                            <div className="flex flex-col min-w-0">
+                                                                <button 
+                                                                    onClick={() => onNavigate('items', item.TypeID)}
+                                                                    className={`text-left truncate hover:underline ${item.Rarity === 'Legendary' ? 'text-amber-400' : item.Rarity === 'Epic' ? 'text-purple-400' : item.Rarity === 'Rare' ? 'text-blue-400' : item.isLearnable ? 'text-red-500 font-bold' : 'text-slate-300'}`}
+                                                                >
+                                                                    {item.Name}
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-2 text-right font-mono text-slate-400">{item.StackSize}</td>
+                                                        <td className="p-2 text-right font-mono text-emerald-400 text-xs">{(item.Value * item.StackSize).toLocaleString()}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                     </div>
+                                </div>
+                            ) : (
+                                <div className="overflow-y-auto h-full space-y-4">
+                                    <div className="flex justify-end mb-2">
+                                        <button 
+                                            onClick={() => setShowAllInventory(!showAllInventory)}
+                                            className={`px-3 py-1 rounded border text-xs font-bold flex items-center gap-2 transition-colors ${showAllInventory ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
+                                        >
+                                            {showAllInventory ? <Icon name="check-square" className="w-4 h-4" /> : <Icon name="square" className="w-4 h-4" />}
+                                            Show Shared Storage
+                                        </button>
+                                    </div>
+                                    {Object.entries(storageByZone).sort().map(([zone, vaults]) => (
+                                        <div key={zone}>
+                                            <h3 className="text-xs uppercase text-slate-500 font-bold mb-2 pl-1 sticky top-0 bg-slate-950 py-1 z-10">{zone}</h3>
+                                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+                                                {vaults.map(v => {
+                                                    const pct = v.max > 0 ? (v.count / v.max) * 100 : 0;
+                                                    let colorClass = 'bg-indigo-600';
+                                                    if (pct > 75) colorClass = 'bg-amber-500';
+                                                    if (pct > 90) colorClass = 'bg-red-500';
+
+                                                    return (
+                                                        <button 
+                                                            key={v.id} 
+                                                            onClick={() => setStorageFilter(v.id)}
+                                                            className="bg-slate-800 border border-slate-700 rounded p-2 text-left hover:border-indigo-500 transition-all relative overflow-hidden group"
+                                                        >
+                                                            <div className="relative z-10">
+                                                                <div className="text-xs font-bold text-slate-200 truncate mb-1 group-hover:text-white">
+                                                                    {v.id.replace('NPC_', '').replace('AccountStorage_', 'Shared ')}
+                                                                </div>
+                                                                <div className="flex justify-between items-end">
+                                                                    <div className="text-[10px] text-slate-400">
+                                                                        {v.count} {v.max > 0 && <span className="text-slate-500">/ {v.max}</span>}
+                                                                    </div>
+                                                                    {v.max > 0 && <div className={`text-[9px] font-bold ${pct > 90 ? 'text-red-400' : 'text-indigo-300'}`}>{Math.round(pct)}%</div>}
+                                                                </div>
+                                                            </div>
+                                                            {v.max > 0 && (
+                                                                <div className="absolute bottom-0 left-0 h-1 w-full bg-slate-900">
+                                                                    <div className={`h-full ${colorClass} transition-all duration-500`} style={{ width: `${pct}%` }}></div>
+                                                                </div>
+                                                            )}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {activeTab === 'inventory' && (
+                        <div className="flex flex-col h-full">
+                            <div className="flex gap-2 mb-4">
+                                <input 
+                                    type="text" 
+                                    placeholder="Filter items..." 
+                                    value={filter}
+                                    onChange={(e) => setFilter(e.target.value)}
+                                    className="bg-slate-800 border border-slate-700 rounded p-2 text-sm flex-1"
+                                />
+                                <button 
+                                    onClick={() => setShowAllInventory(!showAllInventory)}
+                                    className={`px-3 rounded border text-xs font-bold flex items-center gap-2 transition-colors ${showAllInventory ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
+                                >
+                                    {showAllInventory ? <Icon name="check-square" className="w-4 h-4" /> : <Icon name="square" className="w-4 h-4" />}
+                                    ALL
+                                </button>
+                            </div>
+                            <div className="flex-1 overflow-y-auto">
+                                <table className="w-full text-left text-sm">
+                                    <thead className="text-slate-500 text-xs uppercase bg-slate-900 sticky top-0 z-10">
+                                        <tr>
+                                            <th className="p-2 cursor-pointer hover:text-white" onClick={() => handleSort('Name')}>
+                                                Item {sortConfig.key === 'Name' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                            </th>
+                                            <th className="p-2 cursor-pointer hover:text-white" onClick={() => handleSort('displayLoc')}>
+                                                Loc {sortConfig.key === 'displayLoc' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                            </th>
+                                            <th className="p-2 text-right cursor-pointer hover:text-white" onClick={() => handleSort('StackSize')}>
+                                                Qty {sortConfig.key === 'StackSize' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                            </th>
+                                            <th className="p-2 text-right cursor-pointer hover:text-white" onClick={() => handleSort('totalValue')}>
+                                                Cost {sortConfig.key === 'totalValue' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-800">
+                                        {sortedInventory.map((item, i) => {
+                                            const isNpc = (item.StorageVault || "").startsWith('NPC_');
+                                            const rawLocName = isNpc ? item.StorageVault.replace('NPC_', '') : item.StorageVault;
+                                            const finalLocName = (item.displayLoc || "").replace('NPC_', '');
+                                            
+                                            return (
+                                                <tr key={i} className="hover:bg-slate-800/30 transition-colors">
+                                                    <td className="p-2 flex items-center gap-2">
+                                                        <button onClick={() => onNavigate('items', item.TypeID)} className="shrink-0 hover:opacity-80">
+                                                            <GameIcon iconId={item.icon} size="w-6 h-6" />
+                                                        </button>
+                                                        <div className="flex flex-col min-w-0">
+                                                            <button 
+                                                                onClick={() => onNavigate('items', item.TypeID)}
+                                                                className={`text-left truncate hover:underline ${item.Rarity === 'Legendary' ? 'text-amber-400' : item.Rarity === 'Epic' ? 'text-purple-400' : item.Rarity === 'Rare' ? 'text-blue-400' : item.isLearnable ? 'text-red-500 font-bold' : 'text-slate-300'}`}
+                                                            >
+                                                                {item.Name}
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-2 text-xs text-slate-500">
+                                                        {isNpc ? (
+                                                            <button onClick={() => onNavigate('npcs', rawLocName)} className="hover:text-indigo-400 hover:underline">
+                                                                {finalLocName}
+                                                            </button>
+                                                        ) : (
+                                                            finalLocName
+                                                        )}
+                                                    </td>
+                                                    <td className="p-2 text-right font-mono text-slate-400">{item.StackSize}</td>
+                                                    <td className="p-2 text-right font-mono text-emerald-400 text-xs">
+                                                        {item.Value ? `${item.Value.toLocaleString()} (${(item.Value * item.StackSize).toLocaleString()})` : '-'}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const ActiveSkillsView = ({ onNavigate }) => {
+            const [skills, setSkills] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                const fetchSkills = async () => {
+                    setLoading(true);
+                    const allSkills = await db.objects.where('[type+category]').equals(['skills', 'active']).toArray();
+                    setSkills(allSkills.sort((a, b) => a.name.localeCompare(b.name)));
+                    setLoading(false);
+                };
+                fetchSkills();
+            }, []);
+
+            if (loading) return <div className="h-full flex items-center justify-center text-slate-500"><Icon name="loader-2" className="w-8 h-8 animate-spin" /></div>;
+
+            return (
+                <div className="p-4 md:p-8 pb-32">
+                    <h2 className="text-2xl md:text-3xl font-light text-white mb-2">Active Skills</h2>
+                    <p className="text-slate-400 mb-6 text-sm">Skills with icons or abilities.</p>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                        {skills.map(skill => (
+                            <div key={skill.id} onClick={() => onNavigate('skills', skill.id)} className="bg-slate-800/50 hover:bg-slate-700 rounded-xl p-4 cursor-pointer border border-slate-700/50 hover:border-indigo-500 transition-all group shadow-sm flex flex-col items-center text-center gap-3">
+                                <GameIcon iconId={skill.derivedIcon} size="w-14 h-14" className="group-hover:scale-110 transition-transform shadow-md" />
+                                <div>
+                                    <div className="font-bold text-slate-200 text-sm group-hover:text-white leading-tight">{skill.name}</div>
+                                    <div className="text-[10px] text-slate-500 mt-1">Max Lvl {skill.data.MaxLevel || 100}</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const TradeSkillsView = ({ onNavigate }) => {
+            const [skills, setSkills] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                const fetchSkills = async () => {
+                    setLoading(true);
+                    const allSkills = await db.objects.where('[type+category]').equals(['skills', 'trade']).toArray();
+                    
+                    // Grouping logic for Phrenology/Cartography/Augmentation
+                    allSkills.sort((a, b) => {
+                        const getGroup = (s) => {
+                            if (s.includes("Phrenology")) return "Phrenology " + s;
+                            if (s.includes("Cartography")) return "Cartography " + s;
+                            if (s.includes("Augmentation")) return "Augmentation " + s;
+                            return s;
+                        };
+                        return getGroup(a.name).localeCompare(getGroup(b.name));
+                    });
+
+                    setSkills(allSkills);
+                    setLoading(false);
+                };
+                fetchSkills();
+            }, []);
+
+            if (loading) return <div className="h-full flex items-center justify-center text-slate-500"><Icon name="loader-2" className="w-8 h-8 animate-spin" /></div>;
+
+            return (
+                <div className="p-4 md:p-8 pb-32">
+                    <h2 className="text-2xl md:text-3xl font-light text-white mb-2">Arts & Crafts</h2>
+                    <p className="text-slate-400 mb-6 text-sm">Trade skills, crafting, and miscellaneous.</p>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                        {skills.map(skill => (
+                            <div key={skill.id} onClick={() => onNavigate('skills', skill.id)} className="bg-slate-800/50 hover:bg-slate-700 rounded-xl p-4 cursor-pointer border border-slate-700/50 hover:border-indigo-500 transition-all group shadow-sm flex flex-col items-center text-center gap-3">
+                                <GameIcon iconId={skill.derivedIcon} size="w-14 h-14" className="group-hover:scale-110 transition-transform shadow-md" />
+                                <div>
+                                    <div className="font-bold text-slate-200 text-sm group-hover:text-white leading-tight">{skill.name}</div>
+                                    <div className="text-[10px] text-slate-500 mt-1">Max Lvl {skill.data.MaxLevel || 100}</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const LoreView = ({ onNavigate }) => {
+            const [items, setItems] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                const fetchLore = async () => {
+                    setLoading(true);
+                    const allSkills = await db.objects.where('[type+category]').equals(['skills', 'lore']).toArray();
+                    setItems(allSkills.sort((a, b) => a.name.localeCompare(b.name)));
+                    setLoading(false);
+                };
+                fetchLore();
+            }, []);
+
+            if (loading) return <div className="h-full flex items-center justify-center text-slate-500"><Icon name="loader-2" className="w-8 h-8 animate-spin" /></div>;
+
+            return (
+                <div className="p-4 md:p-8 pb-32">
+                    <h2 className="text-2xl md:text-3xl font-light text-white mb-2">Lore & More</h2>
+                    <p className="text-slate-400 mb-6 text-sm">Passive skills, knowledge, and miscellaneous.</p>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                        {items.map(skill => (
+                            <div key={skill.id} onClick={() => onNavigate('skills', skill.id)} className="bg-slate-800/50 hover:bg-slate-700 rounded-xl p-4 cursor-pointer border border-slate-700/50 hover:border-indigo-500 transition-all group shadow-sm flex flex-col items-center text-center gap-3">
+                                <GameIcon iconId={skill.derivedIcon} size="w-14 h-14" className="group-hover:scale-110 transition-transform shadow-md" />
+                                <div>
+                                    <div className="font-bold text-slate-200 text-sm group-hover:text-white leading-tight">{skill.name}</div>
+                                    <div className="text-[10px] text-slate-500 mt-1">Max Lvl {skill.data.MaxLevel || 100}</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const TreasureListView = ({ onNavigate }) => {
+            const [skillGroups, setSkillGroups] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                const fetchTreasures = async () => {
+                    setLoading(true);
+                    const allMods = await db.objects.where('type').equals('tsysclientinfo').toArray();
+                    
+                    const groups = {};
+                    allMods.forEach(mod => {
+                        if (mod.data.Skill) {
+                            groups[mod.data.Skill] = (groups[mod.data.Skill] || 0) + 1;
+                        }
+                    });
+
+                    const processed = [];
+                    await Promise.all(Object.keys(groups).map(async (skillName) => {
+                        let icon = 5005; 
+                        const skillObj = await db.objects.where('type').equals('skills').filter(s => s.name === skillName).first();
+                        if (skillObj && (skillObj.derivedIcon || skillObj.data.IconId)) {
+                            icon = skillObj.derivedIcon || skillObj.data.IconId;
+                        } else {
+                             const ability = await db.objects.where('type').equals('abilities').filter(a => a.data.Skill === skillName).first();
+                             if (ability && ability.data.IconId) icon = ability.data.IconId;
+                        }
+                        
+                        processed.push({
+                            name: skillName,
+                            count: groups[skillName],
+                            icon: icon
+                        });
+                    }));
+
+                    processed.sort((a, b) => a.name.localeCompare(b.name));
+                    setSkillGroups(processed);
+                    setLoading(false);
+                };
+                fetchTreasures();
+            }, []);
+
+            if (loading) return <div className="h-full flex items-center justify-center text-slate-500"><Icon name="loader-2" className="w-8 h-8 animate-spin" /></div>;
+
+            return (
+                <div className="p-4 md:p-8 pb-32">
+                    <h2 className="text-2xl md:text-3xl font-light text-white mb-2">Treasure Mods</h2>
+                    <p className="text-slate-400 mb-6 text-sm">Equipment modifications by skill.</p>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                        {skillGroups.map(group => (
+                            <div key={group.name} onClick={() => onNavigate('tsysclientinfo', null, group.name)} className="bg-slate-800/50 hover:bg-slate-700 rounded-xl p-4 cursor-pointer border border-slate-700/50 hover:border-indigo-500 transition-all group shadow-sm flex flex-col items-center text-center gap-3">
+                                <GameIcon iconId={group.icon} size="w-14 h-14" className="group-hover:scale-110 transition-transform shadow-md" />
+                                <div>
+                                    <div className="font-bold text-slate-200 text-sm group-hover:text-white leading-tight">{group.name}</div>
+                                    <div className="text-[10px] text-slate-500 mt-1">{group.count} Mods</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const IngestView = ({ onIngestComplete, autoStart }) => {
+            const [version, setVersion] = useState('439');
+            const [loading, setLoading] = useState(false);
+            const [progress, setProgress] = useState(0);
+            const [status, setStatus] = useState('Ready');
+            const [currentFile, setCurrentFile] = useState('');
+            const [corsError, setCorsError] = useState(false);
+            const [logs, setLogs] = useState([]);
+            const [confirmPurge, setConfirmPurge] = useState(false);
+
+            const addLog = (msg) => setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev]);
+
+            const processJson = async (filename, jsonData) => {
+                const typeName = filename.replace('.json', '');
+                const entries = [];
+                addLog(`Parsing ${typeName}...`);
+                for (const [key, val] of Object.entries(jsonData)) {
+                    let id = val.ID;
+                    if (!id && key.includes('_')) id = parseInt(key.split('_')[1]);
+                    if (!id) id = key;
+
+                    let name = val.Name || val.InternalName || val.DisplayName;
+                    if (!name) {
+                        if (typeName === 'skills') name = key; 
+                        else name = val.Description || key;
+                    }
+                    
+                    const refs = new Set();
+                    if (typeName === 'recipes') {
+                        if (val.ResultItems) val.ResultItems.forEach(r => r.ItemCode && refs.add(`item:${r.ItemCode}`));
+                        if (val.ProtoResultItems) val.ProtoResultItems.forEach(r => r.ItemCode && refs.add(`item:${r.ItemCode}`));
+                        if (val.Ingredients) val.Ingredients.forEach(i => i.ItemCode && refs.add(`item:${i.ItemCode}`));
+                        if (val.Skill) {
+                             refs.add(`skill:${val.Skill}`);
+                             refs.add(`skill:${val.Skill.replace('Skill_', '')}`);
+                        }
+                    }
+                    if (typeName === 'itemuses') refs.add(`item:${id}`);
+                    if (typeName === 'items' && val.Keywords) val.Keywords.forEach(k => k.startsWith('Ammo') && refs.add(`keyword:${k}`));
+                    if (typeName === 'skills' && val.AdvancementTable) refs.add(`advancementtable:${val.AdvancementTable}`);
+                    if (typeName === 'abilities') {
+                        if (val.Skill) {
+                            refs.add(`skill:${val.Skill}`);
+                            refs.add(`skill:${val.Skill.replace('Skill_', '')}`);
+                        }
+                        if (val.ItemsConsumed) val.ItemsConsumed.forEach(i => i.ItemCode && refs.add(`item:${i.ItemCode}`));
+                    }
+                    if (typeName === 'tsysclientinfo' && val.Skill) {
+                         refs.add(`skill:${val.Skill}`);
+                    }
+                    
+                    entries.push({ type: typeName, id, name, data: val, refs: Array.from(refs), category: 'default' });
+                }
+                await db.objects.bulkPut(entries);
+            };
+
+            const finalizeData = async () => {
+                setStatus('Indexing Skills & Icons...');
+                
+                // 1. Fetch all relevant data into memory (much faster than iterative DB queries)
+                const allSkills = await db.objects.where('type').equals('skills').toArray();
+                const allAbilities = await db.objects.where('type').equals('abilities').toArray();
+                const allRecipes = await db.objects.where('type').equals('recipes').toArray();
+                const allItems = await db.objects.where('type').equals('items').toArray();
+
+                // 2. Build Lookup Maps
+                const abilitySkillMap = {}; // "Fire Magic" -> IconID
+                const recipeSkillMap = {};  // "Blacksmithing" -> true (has recipes)
+                const itemIconMap = {};     // ItemID -> IconID
+
+                allAbilities.forEach(ab => {
+                    if (ab.data.Skill && (ab.data.IconId || ab.data.IconID)) {
+                        // Store the first valid icon we find for a skill name
+                        if (!abilitySkillMap[ab.data.Skill]) {
+                            abilitySkillMap[ab.data.Skill] = ab.data.IconId || ab.data.IconID;
+                        }
+                        // Handle "Skill_FireMagic" format if present
+                        if (!abilitySkillMap[`Skill_${ab.data.Skill}`]) {
+                            abilitySkillMap[`Skill_${ab.data.Skill}`] = ab.data.IconId || ab.data.IconID;
+                        }
+                    }
+                });
+
+                allRecipes.forEach(rec => {
+                    if (rec.data.Skill) {
+                        recipeSkillMap[rec.data.Skill] = true;
+                        recipeSkillMap[`Skill_${rec.data.Skill}`] = true;
+                    }
+                });
+
+                allItems.forEach(item => {
+                    if (item.data.IconId || item.data.IconID) {
+                        itemIconMap[item.id] = item.data.IconId || item.data.IconID;
+                    }
+                });
+
+                // 3. Process Skills
+                const updates = [];
+                for (const skill of allSkills) {
+                    let category = 'lore';
+                    let icon = skill.data.IconId || skill.data.IconID;
+                    const skillName = skill.name;
+                    const skillId = skill.id; // e.g. "Skill_FireMagic" or just "FireMagic" or ID
+
+                    // Resolve Icon
+                    if (!icon) {
+                        // Try ability map first (Active skills usually have abilities)
+                        if (abilitySkillMap[skillName]) icon = abilitySkillMap[skillName];
+                        else if (abilitySkillMap[skillId]) icon = abilitySkillMap[skillId];
+                        // Try removing "Skill_" prefix
+                        else if (typeof skillId === 'string' && skillId.startsWith('Skill_') && abilitySkillMap[skillId.replace('Skill_', '')]) {
+                            icon = abilitySkillMap[skillId.replace('Skill_', '')];
+                        }
+                    }
+
+                    // Fallback Icon
+                    if (!icon) {
+                        if (skillName === 'Fire Magic') icon = 3608;
+                        else icon = 5005; // Generic book
+                    }
+
+                    // Resolve Category
+                    if (skill.data.Combat) {
+                        category = 'active';
+                    } else if (recipeSkillMap[skillName] || recipeSkillMap[skillId]) {
+                        category = 'trade';
+                    } else {
+                        // Check if it has abilities but isn't marked combat (e.g. First Aid)
+                        const hasAbilities = abilitySkillMap[skillName] || abilitySkillMap[skillId];
+                        if (hasAbilities) category = 'active';
+                    }
+
+                    // Special Overrides
+                    if (skillName === 'Compassion' || skillName === 'Meditation') category = 'lore';
+
+                    skill.category = category;
+                    skill.derivedIcon = icon;
+                    updates.push(skill);
+                }
+
+                await db.objects.bulkPut(updates);
+            };
+
+            const runIngest = async () => {
+                setLoading(true);
+                try {
+                    const baseUrl = `https://cdn.projectgorgon.com/v${version}/data`;
+                    for (let i = 0; i < KNOWN_FILES.length; i++) {
+                        setStatus(`Downloading ${KNOWN_FILES[i]}`);
+                        const res = await fetch(`${baseUrl}/${KNOWN_FILES[i]}`);
+                        await processJson(KNOWN_FILES[i], await res.json());
+                        setProgress(((i+1)/KNOWN_FILES.length)*90);
+                    }
+                    await finalizeData();
+                    setProgress(100);
+                    setStatus('Complete');
+                    onIngestComplete();
+                } catch(e) { console.error(e); setStatus('Error'); }
+                setLoading(false);
+            };
+
+            useEffect(() => { if(autoStart) runIngest(); }, [autoStart]);
+            
+            const handleFileUpload = async (e) => {
+                const files = Array.from(e.target.files);
+                setLoading(true); setCorsError(false); setLogs([]);
+                
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    setStatus(`Processing ${i+1}/${files.length}`);
+                    setCurrentFile(file.name);
+                    try {
+                        const text = await file.text();
+                        const json = JSON.parse(text);
+                        
+                        if (json.Report === 'CharacterSheet') {
+                            localStorage.setItem('gorgon_character_' + json.Character, JSON.stringify({ type: 'character', id: json.Character, data: json }));
+                            addLog(`Imported Character Sheet for ${json.Character}`);
+                        } else if (json.Report === 'Storage') {
+                             const charName = json.Character || 'Unknown';
+                            localStorage.setItem('gorgon_inventory_' + charName, JSON.stringify({ type: 'inventory', id: charName, data: json }));
+                            addLog(`Imported Storage Data for ${charName}`);
+                        } else {
+                            await processJson(file.name.toLowerCase(), json);
+                        }
+                    } catch (err) {
+                        addLog(`Error: ${file.name}`);
+                    }
+                    setProgress(((i+1)/files.length)*100);
+                }
+                
+                setLoading(false);
+                setStatus('Complete');
+                onIngestComplete();
+            };
+
+            const handlePurge = () => {
+                if (!confirmPurge) {
+                    setConfirmPurge(true);
+                    setTimeout(() => setConfirmPurge(false), 4000);
+                    return;
+                }
+                
+                const keysToRemove = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    if (key.startsWith('gorgon_character_') || key.startsWith('gorgon_inventory_')) {
+                        keysToRemove.push(key);
+                    }
+                }
+                keysToRemove.forEach(k => localStorage.removeItem(k));
+                addLog(`Purged ${keysToRemove.length} user files.`);
+                setConfirmPurge(false);
+            };
+
+            return (
+                <div className="p-8 max-w-md mx-auto">
+                    <h2 className="text-2xl font-light text-white mb-4">Data Import</h2>
+                    <div className="bg-slate-800 rounded-xl p-6 shadow-lg border border-slate-700 mb-6">
+                        <div className="flex gap-4 items-end mb-4">
+                            <div className="flex-1">
+                                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Version</label>
+                                <input type="text" value={version} onChange={(e) => setVersion(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded px-4 py-2 focus:outline-none focus:border-indigo-500 transition-colors" />
+                            </div>
+                            <button onClick={runIngest} disabled={loading} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-6 py-2 rounded font-medium transition-colors">{loading ? 'Fetching...' : 'Fetch All'}</button>
+                        </div>
+                        {loading && <LoadingBar progress={progress} status={status} subStatus={currentFile} />}
+                        {corsError && <div className="mt-4 bg-red-900/50 border border-red-700 text-red-200 p-4 rounded text-sm"><p className="font-bold flex items-center gap-2"><Icon name="alert-triangle" className="w-4 h-4" /> CORS Error</p><div className="mt-3 p-3 bg-slate-900 rounded"><div className="text-xs text-slate-400 mb-2">Drag & Drop game data files or Character/Storage JSONs here:</div><input type="file" multiple accept=".json" onChange={handleFileUpload} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:bg-indigo-600 file:text-white hover:file:bg-indigo-500" /></div></div>}
+                        {!corsError && !loading && (
+                            <div className="mt-6 pt-6 border-t border-slate-700">
+                                <button 
+                                    onClick={handlePurge} 
+                                    className={`block w-full text-right text-xs font-bold uppercase tracking-wider mb-4 transition-colors ${confirmPurge ? 'text-white bg-red-600 py-2 px-3 rounded' : 'text-red-500 hover:text-red-400 hover:underline'}`}
+                                >
+                                    {confirmPurge ? "CONFIRM PURGE?" : "PURGE CHARACTER DATA"}
+                                </button>
+                                <div className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">User Data Import</div>
+                                <div className="p-4 border-2 border-dashed border-slate-600 rounded-lg text-center hover:border-indigo-500 transition-colors">
+                                    <input type="file" multiple accept=".json" onChange={handleFileUpload} className="hidden" id="user-upload" />
+                                    <label htmlFor="user-upload" className="cursor-pointer text-sm text-slate-300 hover:text-white block">Click to upload Character/Storage JSON</label>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    <div className="bg-black/30 rounded-lg p-4 font-mono text-xs text-green-400 h-64 overflow-y-auto border border-slate-800">{logs.length === 0 ? <span className="opacity-50">Log output waiting...</span> : logs.map((l, i) => <div key={i}>{l}</div>)}</div>
+                </div>
+            );
+        };
+
+        function ExplorerView({ initialParams, onNavigate, onBack }) {
+            const [query, setQuery] = useState('');
+            const [filterType, setFilterType] = useState('items');
+            const [limit, setLimit] = useState(50);
+            const [results, setResults] = useState([]);
+            const [selectedObj, setSelectedObj] = useState(null);
+            const [referencingObjs, setReferencingObjs] = useState([]);
+            const [isBookmarked, setIsBookmarked] = useState(false);
+            
+            const observerTarget = useRef(null);
+            const categories = KNOWN_FILES.map(f => f.replace('.json', ''));
+
+            useEffect(() => {
+                if (initialParams) {
+                    setFilterType(initialParams.type);
+                    const fetchInitial = async () => {
+                        let obj = await db.objects.get({ type: initialParams.type, id: initialParams.id });
+                        // Fallback lookup for string IDs
+                        if (!obj && typeof initialParams.id === 'string') {
+                             const q = initialParams.id.toLowerCase();
+                             const matches = await db.objects.where('type').equals(initialParams.type)
+                                .filter(o => o.name.toLowerCase() === q || (o.data.InternalName && o.data.InternalName.toLowerCase().includes(q)))
+                                .toArray();
+                             if (matches.length > 0) obj = matches[0];
+                        } else if (!obj && initialParams.query) {
+                             // Treasure mods query fallback
+                             const matches = await db.objects.where('type').equals(initialParams.type)
+                                .filter(o => o.data.Skill === initialParams.query)
+                                .toArray();
+                             // Treasure view doesn't select a single obj usually, but we need to handle it
+                        }
+                        if (obj) setSelectedObj(obj);
+                    };
+                    fetchInitial();
+                } else {
+                    // Reset if no params
+                    setSelectedObj(null);
+                }
+            }, [initialParams]);
+
+            useEffect(() => {
+                const checkBookmark = () => {
+                    if (!selectedObj) return;
+                    const bookmarks = JSON.parse(localStorage.getItem('stone_eye_bookmarks') || '[]');
+                    setIsBookmarked(bookmarks.some(b => b.type === selectedObj.type && b.id === selectedObj.id));
+                };
+                checkBookmark();
+            }, [selectedObj]);
+
+            const toggleBookmark = () => {
+                if (!selectedObj) return;
+                const bookmarks = JSON.parse(localStorage.getItem('stone_eye_bookmarks') || '[]');
+                const exists = bookmarks.some(b => b.type === selectedObj.type && b.id === selectedObj.id);
+                let newBookmarks;
+                if (exists) {
+                    newBookmarks = bookmarks.filter(b => !(b.type === selectedObj.type && b.id === selectedObj.id));
+                    setIsBookmarked(false);
+                } else {
+                    newBookmarks = [...bookmarks, { type: selectedObj.type, id: selectedObj.id, name: selectedObj.name }];
+                    setIsBookmarked(true);
+                }
+                localStorage.setItem('stone_eye_bookmarks', JSON.stringify(newBookmarks));
+            };
+
+            const handleNavigate = (type, id) => {
+                onNavigate(type, id);
+            };
+
+            useEffect(() => {
+                const timer = setTimeout(async () => {
+                    let collection = db.objects.where('type').equals(filterType);
+                    const q = query.toLowerCase();
+
+                    // Specific Treasure Mod Query
+                    if (initialParams && initialParams.type === 'tsysclientinfo' && initialParams.query && filterType === 'tsysclientinfo') {
+                         collection = collection.filter(obj => obj.data.Skill === initialParams.query);
+                    } 
+                    // Enhanced Search (Name + Keywords + Description)
+                    else if (q) {
+                        collection = collection.filter(obj => {
+                            // 1. Check Name
+                            if (obj.name.toLowerCase().includes(q)) return true;
+                            // 2. Check Skill Name
+                            if (obj.data.Skill && obj.data.Skill.toLowerCase().includes(q)) return true;
+                            // 3. Check Internal Name
+                            if (obj.data.InternalName && obj.data.InternalName.toLowerCase().includes(q)) return true;
+                            // 4. Check Keywords (Crucial for items)
+                            if (obj.data.Keywords && Array.isArray(obj.data.Keywords)) {
+                                if (obj.data.Keywords.some(k => k.toLowerCase().includes(q))) return true;
+                            }
+                            return false;
+                        });
+                    }
+                    const res = await collection.limit(limit).toArray();
+                    setResults(res);
+                }, 300);
+                return () => clearTimeout(timer);
+            }, [query, filterType, limit, initialParams]);
+
+            useEffect(() => {
+                const observer = new IntersectionObserver((entries) => { if (entries[0].isIntersecting) setLimit(l => l + 50); }, { threshold: 0.1 });
+                if (observerTarget.current) observer.observe(observerTarget.current);
+                return () => observer.disconnect();
+            }, [results]);
+
+            useEffect(() => {
+                const findRefs = async () => {
+                    if (!selectedObj) { setReferencingObjs([]); return; }
+                    const map = { 'items': 'item', 'skills': 'skill', 'recipes': 'recipe', 'abilities': 'ability' };
+                    const prefix = map[selectedObj.type] || selectedObj.type;
+                    const refKey = `${prefix}:${selectedObj.id}`;
+                    let keysToCheck = [refKey];
+                    if (typeof selectedObj.id === 'string' && selectedObj.id.startsWith('Skill_')) {
+                        keysToCheck.push(`${prefix}:${selectedObj.id.replace('Skill_', '')}`);
+                    }
+                    const refs = await db.objects.where('refs').anyOf(keysToCheck).toArray();
+                    setReferencingObjs(refs);
+                };
+                findRefs();
+            }, [selectedObj]);
+
+            return (
+                <div className="flex h-full">
+                    <div className={`w-full md:w-1/3 min-w-[300px] border-r border-slate-800 flex flex-col bg-slate-900 ${selectedObj ? 'hidden md:flex' : 'flex'}`}>
+                        <div className="p-4 border-b border-slate-800 space-y-3 bg-slate-900 z-10">
+                            <select value={filterType} onChange={(e) => { setFilterType(e.target.value); setQuery(''); setSelectedObj(null); }} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 appearance-none">
+                                {categories.map(c => <option key={c} value={c}>{c.toUpperCase()}</option>)}
+                            </select>
+                            <div className="relative">
+                                <Icon name="search" className="absolute left-3 top-3.5 w-4 h-4 text-slate-500" />
+                                <input type="text" placeholder={`Search ${filterType}...`} value={query} onChange={(e) => setQuery(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors" />
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto pb-20 md:pb-0">
+                            {results.map(obj => <ResultRow key={`${obj.type}-${obj.id}`} obj={obj} onClick={() => handleNavigate(obj.type, obj.id)} isSelected={selectedObj?.id === obj.id && selectedObj?.type === obj.type} />)}
+                            {results.length >= limit && <div ref={observerTarget} className="p-4 flex justify-center"><Icon name="loader-2" className="w-6 h-6 animate-spin text-indigo-500" /></div>}
+                        </div>
+                    </div>
+                    <div className={`w-full md:flex-1 overflow-y-auto bg-slate-950 ${selectedObj ? 'flex' : 'hidden md:flex'} flex-col`}>
+                        {selectedObj ? (
+                            <div className="max-w-4xl mx-auto w-full">
+                                <div className="md:hidden sticky top-0 z-20 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center gap-2">
+                                    <button onClick={onBack} className="flex items-center text-indigo-400 font-medium"><Icon name="chevron-left" className="w-5 h-5" /> Back</button>
+                                </div>
+                                <div className="p-4 md:p-8">
+                                    <div className="flex items-start gap-4 mb-6 relative">
+                                        <WikiButton type={selectedObj.type} name={selectedObj.name} />
+                                        <button 
+                                            onClick={toggleBookmark}
+                                            className="absolute right-0 top-0 p-2 hover:bg-slate-800 rounded-full transition-colors"
+                                        >
+                                            <Icon 
+                                                name="star" 
+                                                className={`w-6 h-6 ${isBookmarked ? 'text-amber-400 fill-amber-400 animate-pop' : 'text-slate-600'}`} 
+                                            />
+                                        </button>
+
+                                        {(selectedObj.data.IconId || selectedObj.data.IconID) && <GameIcon iconId={selectedObj.data.IconId || selectedObj.data.IconID} size="w-16 h-16" className="rounded-xl shadow-lg" />}
+                                        <div className="flex-1 min-w-0 pr-10">
+                                            <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-900/50 text-indigo-300 mb-1 uppercase border border-indigo-800">{selectedObj.type}</span>
+                                            <h2 className="text-2xl md:text-3xl font-bold text-white leading-tight break-words">{selectedObj.name}</h2>
+                                            <div className="font-mono text-xs text-slate-500 mt-1">ID: {selectedObj.id}</div>
+                                        </div>
+                                    </div>
+                                    <div className="bg-slate-900/50 rounded-xl p-4 md:p-6 mb-8 border border-slate-800/50 shadow-sm">
+                                        <div className="text-slate-500 mb-2 text-[10px] uppercase tracking-wider font-bold">Description</div>
+                                        <div className="text-slate-300 text-sm leading-relaxed whitespace-pre-line">{selectedObj.data.Description || selectedObj.data.Desc || "No description provided."}</div>
+                                    </div>
+                                    {(() => {
+                                        switch (selectedObj.type) {
+                                            case 'items': return <ItemDetail data={selectedObj.data} referencedBy={referencingObjs} onNavigate={handleNavigate} />;
+                                            case 'recipes': return <RecipeDetail data={selectedObj.data} referencedBy={referencingObjs} onNavigate={handleNavigate} />;
+                                            case 'abilities': return <AbilityDetail data={selectedObj.data} referencedBy={referencingObjs} onNavigate={handleNavigate} />;
+                                            case 'skills': return <SkillDetail data={selectedObj.data} referencedBy={referencingObjs} onNavigate={handleNavigate} />;
+                                            case 'tsysclientinfo': return <TreasureDetail data={selectedObj.data} onNavigate={handleNavigate} />;
+                                            default: return <GenericDetail data={selectedObj.data} referencedBy={referencingObjs} onNavigate={handleNavigate} />;
+                                        }
+                                    })()}
+                                    <div className="mt-8 pb-20">
+                                        <div className="text-slate-600 text-[10px] uppercase tracking-wider font-bold mb-2">Raw JSON</div>
+                                        <pre className="bg-slate-950 p-4 rounded-lg text-[10px] font-mono text-emerald-600/80 overflow-x-auto border border-slate-900 whitespace-pre-wrap break-words">{JSON.stringify(selectedObj.data, null, 2)}</pre>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="h-full flex flex-col items-center justify-center text-slate-600 p-8"><LandingView onSelectCategory={(cat) => setFilterType(cat)} /></div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // ==========================================
+        // 5. MAIN APP & RENDER
+        // ==========================================
+
+        function App() {
+            // INTERNAL ROUTER
+            const [historyStack, setHistoryStack] = useState([{ tab: 'loading', params: null }]);
+            const [historyIndex, setHistoryIndex] = useState(0);
+            
+            const [totalRecords, setTotalRecords] = useState(0);
+            const [autoIngest, setAutoIngest] = useState(false);
+
+            const activeState = historyStack[historyIndex];
+            const activeTab = activeState.tab;
+            const explorerParams = activeState.params;
+
+            useEffect(() => {
+                const check = async () => {
+                     const count = await db.objects.count();
+                     setTotalRecords(count);
+                     if(count > 0) {
+                         replaceRoute('explore');
+                     } else {
+                         setAutoIngest(true);
+                         replaceRoute('ingest');
+                     }
+                }
+                check();
+            }, []);
+
+            // Sync browser history with internal router
+            useEffect(() => {
+                const handlePopState = (event) => {
+                    // If the browser goes back, we pop our internal stack
+                    if (historyIndex > 0) {
+                        setHistoryIndex(prev => prev - 1);
+                        setHistoryStack(prev => prev.slice(0, prev.length - 1));
+                    }
+                };
+
+                window.addEventListener('popstate', handlePopState);
+                return () => window.removeEventListener('popstate', handlePopState);
+            }, [historyIndex]);
+
+            // Update navigate to push to browser history
+            const navigate = (tab, params = null) => {
+                const nextHistory = historyStack.slice(0, historyIndex + 1);
+                nextHistory.push({ tab, params });
+                setHistoryStack(nextHistory);
+                setHistoryIndex(nextHistory.length - 1);
+                // Push dummy state to enable back button interception
+                try {
+                    window.history.pushState({ index: nextHistory.length - 1 }, '');
+                } catch (e) {
+                    // Ignore pushState errors in restricted environments
+                }
+            };
+
+            const replaceRoute = (tab, params = null) => {
+                const nextHistory = historyStack.slice(0, historyIndex); // Keep history up to current
+                nextHistory.push({ tab, params });
+                setHistoryStack(nextHistory);
+                setHistoryIndex(nextHistory.length - 1);
+            };
+
+            const goBack = () => {
+                if (historyIndex > 0) {
+                    setHistoryIndex(historyIndex - 1);
+                }
+            };
+
+            const handleIngestComplete = async () => {
+                const count = await db.objects.count();
+                setTotalRecords(count);
+                setAutoIngest(false); 
+                navigate('explore');
+            };
+
+            const handleExplorerNavigate = (type, id, query) => {
+                navigate('explore', { type, id, query });
+            }
+
+            if (activeTab === 'loading') {
+                return (
+                    <div className="h-full flex flex-col items-center justify-center bg-slate-950 text-slate-400">
+                        <Icon name="database" className="w-12 h-12 mb-4 animate-pulse text-indigo-500" />
+                        <div className="text-lg font-light">Checking Database...</div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="flex h-full font-sans flex-col md:flex-row">
+                    {/* Desktop Sidebar */}
+                    <div className="hidden md:flex w-64 bg-slate-900 border-r border-slate-800 flex-col shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold text-indigo-400 flex items-center gap-2">
+                                <Icon name="database" className="w-6 h-6" /> The Stone Eye
+                            </h1>
+                            <p className="text-xs text-slate-500 mt-2">Full Corpus Explorer</p>
+                        </div>
+                        <nav className="flex-1 p-4 space-y-2">
+                            <NavButton active={activeTab === 'explore'} onClick={() => navigate('explore')} icon="search" label="Explorer" />
+                            <NavButton active={activeTab === 'bookmarks'} onClick={() => navigate('bookmarks')} icon="star" label="Bookmarks" />
+                            <NavButton active={activeTab === 'my-character'} onClick={() => navigate('my-character')} icon="user" label="My Character" />
+                            <NavButton active={activeTab === 'active-skills'} onClick={() => navigate('active-skills')} icon="zap" label="Active Skills" />
+                            <NavButton active={activeTab === 'trade-skills'} onClick={() => navigate('trade-skills')} icon="hammer" label="Arts & Crafts" />
+                            <NavButton active={activeTab === 'lore'} onClick={() => navigate('lore')} icon="book-open" label="Lore & More" />
+                            <NavButton active={activeTab === 'npc-services'} onClick={() => navigate('npc-services')} icon="users" label="NPC Services" />
+                            <NavButton active={activeTab === 'treasure'} onClick={() => navigate('treasure')} icon="gem" label="Treasure Mods" />
+                            <NavButton active={activeTab === 'ingest'} onClick={() => navigate('ingest')} icon="download" label="Import Data" />
+                        </nav>
+                    </div>
+
+                    {/* Mobile Content Area */}
+                    <div className="flex-1 overflow-hidden relative bg-slate-950">
+                        {activeTab === 'ingest' && (
+                            <div className="h-full overflow-y-auto">
+                                <IngestView onIngestComplete={handleIngestComplete} autoStart={autoIngest} />
+                            </div>
+                        )}
+                        {activeTab === 'reference' && (
+                            <MobileReferenceView onNavigate={handleExplorerNavigate} switchTab={navigate} />
+                        )}
+                        {activeTab === 'bookmarks' && (
+                            <div className="h-full overflow-y-auto">
+                                <BookmarksView onNavigate={handleExplorerNavigate} />
+                            </div>
+                        )}
+                        {activeTab === 'active-skills' && (
+                            <div className="h-full overflow-y-auto">
+                                <ActiveSkillsView onNavigate={handleExplorerNavigate} />
+                            </div>
+                        )}
+                        {activeTab === 'trade-skills' && (
+                            <div className="h-full overflow-y-auto">
+                                <TradeSkillsView onNavigate={handleExplorerNavigate} />
+                            </div>
+                        )}
+                        {activeTab === 'lore' && (
+                            <div className="h-full overflow-y-auto">
+                                <LoreView onNavigate={handleExplorerNavigate} />
+                            </div>
+                        )}
+                         {activeTab === 'treasure' && (
+                            <div className="h-full overflow-y-auto">
+                                <TreasureListView onNavigate={handleExplorerNavigate} />
+                            </div>
+                        )}
+                        {activeTab === 'npc-services' && (
+                            <div className="h-full overflow-y-auto">
+                                <NpcServicesView onNavigate={handleExplorerNavigate} />
+                            </div>
+                        )}
+                        {activeTab === 'my-character' && (
+                            <div className="h-full overflow-y-auto">
+                                 <MyCharacterView onNavigate={handleExplorerNavigate} />
+                            </div>
+                        )}
+                        {activeTab === 'explore' && (
+                            <ExplorerView 
+                                initialParams={explorerParams} 
+                                onNavigate={handleExplorerNavigate} 
+                                onBack={goBack} 
+                            />
+                        )}
+                    </div>
+
+                    {/* Mobile Bottom Nav */}
+                    <div className="md:hidden fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 nav-safe-padding z-50">
+                        <div className="grid grid-cols-4 h-16">
+                            <MobileNavBtn active={activeTab === 'explore'} onClick={() => navigate('explore')} icon="search" label="Explore" />
+                            <MobileNavBtn active={activeTab === 'my-character'} onClick={() => navigate('my-character')} icon="user" label="Me" />
+                            <MobileNavBtn active={activeTab === 'reference'} onClick={() => navigate('reference')} icon="book-open" label="Reference" />
+                            <MobileNavBtn active={activeTab === 'ingest'} onClick={() => navigate('ingest')} icon="download" label="Import" />
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

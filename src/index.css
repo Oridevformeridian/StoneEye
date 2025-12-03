@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@import "tailwindcss";
+
+@layer components {
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  .safe-area-pb { padding-bottom: env(safe-area-inset-bottom); }
+  .sticky-col { position: sticky; left: 0; z-index: 10; }
+  .nav-safe-padding { padding-bottom: max(env(safe-area-inset-bottom), 1rem); }
+}
+
+@layer base {
+  body { -webkit-tap-highlight-color: transparent; }
+}
+
+@keyframes pop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+@layer utilities {
+  .animate-pop { animation: pop 0.2s ease-out; }
+}
+
+/* Ensure scrollable areas inside the main content reserve space for the fixed mobile nav */
+.main-content .overflow-y-auto,
+.main-content .overflow-auto {
+  padding-bottom: 4rem; /* matches mobile nav height (h-16) */
+}
+@media (min-width: 768px) {
+  .main-content .overflow-y-auto,
+  .main-content .overflow-auto {
+    padding-bottom: 0;
+  }
+}
+
+/* On small screens ensure scroll containers are shortened so their scrollbar
+   track ends above the fixed mobile nav (4rem). This prevents the thumb from
+   being obscured by the nav. */
+@media (max-width: 767px) {
+  .main-content .flex-1.overflow-y-auto,
+  .main-content .overflow-y-auto,
+  .main-content .overflow-auto {
+    max-height: calc(100% - 4rem);
+    box-sizing: border-box;
+  }
+}

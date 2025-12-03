@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>The Stone Eye</title>
+    <meta name="description" content="Offline-capable data explorer for Project Gorgon.">
+
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="format-detection" content="telephone=no">
+    
+    <link rel="apple-touch-icon" href="https://cdn.projectgorgon.com/v439/icons/icon_1003.png">
+    <link rel="icon" type="image/png" href="https://cdn.projectgorgon.com/v439/icons/icon_1003.png">
+
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Minimal fallback styles to preserve look if Tailwind utilities fail to load -->
+    <style>
+      :root { --bg: #0f172a; --panel: #0b1220; --muted: #94a3b8; --accent: #6366f1; --text: #e6eef8; }
+      html,body,#app { height:100%; margin:0; }
+      body { background:var(--bg); color:var(--text); font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; }
+        /* Core layout: ensure the app root is a flex container and switches to row on desktop */
+        #app > div { display:flex; flex-direction:column; min-height:100vh; }
+        @media (min-width:768px) { #app > div { flex-direction:row; } }
+
+        /* Desktop sidebar fallback */
+        #desktop-sidebar { display:none; order:0; }
+        @media (min-width: 768px) {
+          #desktop-sidebar { display:flex; width:16rem; background:var(--panel); border-right:1px solid rgba(148,163,184,0.06); flex-direction:column; position:relative; z-index:1; }
+        }
+
+        /* Main content area */
+        .main-content { flex:1; order:1; padding-bottom:0.5rem; }
+        @media (min-width:768px) { .main-content { padding-bottom:0; } }
+
+        /* Mobile bottom nav fallback */
+        #mobile-bottom-nav { display:flex; position:fixed; left:0; right:0; bottom:0; height:4rem; align-items:center; justify-content:center; background:var(--panel); border-top:1px solid rgba(148,163,184,0.06); z-index:60; }
+        @media (min-width: 768px) { #mobile-bottom-nav { display:none; } }
+
+        /* Common utility fallbacks used by many components */
+        .bg-slate-900{ background:var(--panel); }
+        .bg-slate-950{ background:var(--bg); }
+        .text-slate-100{ color:var(--text); }
+        .text-slate-500{ color:var(--muted); }
+        .border-slate-800{ border-color: rgba(8,10,15,0.6); }
+        .nav-safe-padding{ padding-bottom: calc(env(safe-area-inset-bottom) + 0.25rem); }
+
+        /* Card and border fallbacks so elements keep rounded corners and spacing */
+        .rounded-xl{ border-radius:12px; }
+        .rounded-lg{ border-radius:8px; }
+        .rounded{ border-radius:6px; }
+        .shadow-sm{ box-shadow: 0 6px 18px rgba(2,6,23,0.5); }
+        .border{ border:1px solid rgba(148,163,184,0.06); }
+        .p-4{ padding:1rem; }
+        .p-6{ padding:1.5rem; }
+        .p-8{ padding:2rem; }
+        .gap-3{ gap:.75rem; }
+        .gap-4{ gap:1rem; }
+        .text-center{ text-align:center; }
+        .text-left{ text-align:left; }
+        .grid{ display:grid; }
+        .grid-cols-2{ grid-template-columns: repeat(2, minmax(0,1fr)); }
+        .md\:grid-cols-3{ grid-template-columns: repeat(3, minmax(0,1fr)); }
+        .md\:grid-cols-4{ grid-template-columns: repeat(4, minmax(0,1fr)); }
+        @media (min-width:768px){
+          .md\:grid-cols-3{ grid-template-columns: repeat(3, minmax(0,1fr)); }
+          .md\:grid-cols-2{ grid-template-columns: repeat(2, minmax(0,1fr)); }
+        }
+    </style>
+  </head>
+  <body class="bg-slate-950 text-slate-100 h-dvh w-screen overflow-hidden selection:bg-indigo-500/30">
+    <div id="app" class="h-full w-full"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
