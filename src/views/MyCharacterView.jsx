@@ -3,6 +3,7 @@ import Icon from '../components/Icon';
 import GameIcon from '../components/GameIcon';
 import { db } from '../db';
 import { FAVOR_LEVELS } from '../constants';
+import { parseLogFileObject } from '../utils/logParser.js';
 
 const MyCharacterView = ({ onNavigate, goToIngest }) => {
     const [activeTab, setActiveTab] = useState('stats');
@@ -65,6 +66,35 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
     useEffect(() => {
         if (!selectedCharId && !showAllInventory) return;
         setLoading(true);
+
+        const handleCharLogUpload = async (e) => {
+            const files = Array.from(e.target.files || []);
+            if (files.length === 0 || !selectedCharId) return;
+            try {
+                for (const file of files) {
+                    const parsed = await parseLogFileObject(file);
+                    if (parsed && parsed.length > 0) {
+                        const entries = parsed.map(p => {
+                            const entryId = `${selectedCharId}_${p.id}_${p.vendorName}`;
+                            const name = p.vendorName || (`vendor_${p.id}`);
+                            const refs = [];
+                            refs.push(`character:${selectedCharId}`);
+                            if (p.npc) refs.push(`npc:${p.npc}`);
+                            if (p.vendorName) refs.push(`vendor:${p.vendorName}`);
+                            return {
+                                type: 'vendors',
+                                id: entryId,
+                                name,
+                                data: { ...p, character: selectedCharId },
+                                refs,
+                                category: 'vendor'
+                            };
+                        });
+                        await db.objects.bulkPut(entries);
+                    }
+                }
+            } catch (err) { console.error('Log import error', err); }
+        };
 
         const loadData = async () => {
             try {
@@ -510,6 +540,11 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                             <div className="space-y-1">
                                 <div className="flex justify-between text-sm"><span className="text-slate-300">Used</span> <span>{encumbrance.used}</span></div>
                                 <div className="flex justify-between text-sm"><span className="text-indigo-300">Shared Storage</span> <span>{encumbrance.shared}</span></div>
+                            </div>
+                            <div className="mt-3 border-t border-slate-700/50 pt-3">
+                                <div className="text-[10px] uppercase text-slate-500 font-bold mb-2">Import Player Logs</div>
+                                <input type="file" accept=".log,.txt" onChange={(e)=>handleCharLogUpload(e)} className="hidden" id="char-log-upload" />
+                                <label htmlFor="char-log-upload" className="px-2 py-1 bg-indigo-600 text-white rounded text-xs cursor-pointer hover:bg-indigo-500">Select Log File</label>
                             </div>
                         </div>
                     </div>
