@@ -34,7 +34,7 @@ function parseLogContent(content) {
     let m = line.match(startRe);
     if (m) {
       const id = m[1];
-      const second = m[2].trim();
+      // second value currently unused
       const favor = parseFloat(m[3]);
       const flag = m[4].trim();
       const npcName = m[5].trim();

@@ -3,7 +3,7 @@ import { db } from '../db/index.js';
 import { KNOWN_FILES } from '../constants/index.js';
 import Icon from '../components/Icon.jsx';
 import LoadingBar from '../components/LoadingBar.jsx';
-import { parseLogFileObject, parseLogContent } from '../utils/logParser.js';
+import { parseLogFileObject } from '../utils/logParser.js';
 
 export default function IngestView({ onIngestComplete, autoStart }) {
     const [version, setVersion] = useState('439');
@@ -280,10 +280,7 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                                 <div className="space-y-2">
                                     {parsedLogs.map((p,i) => (
                                         <div key={i} className="flex items-center justify-between bg-slate-900/60 p-2 rounded">
-                                            <div className="text-xs text-slate-300">{p.file} — {p.parsed.length} entries</div>
-                                            <div className="flex gap-2">
-                                                <button onClick={() => exportParsed(p)} className="text-xs bg-indigo-600 px-2 py-1 rounded">Export JSON</button>
-                                            </div>
+                                            <div className="text-xs text-slate-300">{p.file} — {p.parsed.length} entries ingested</div>
                                         </div>
                                     ))}
                                 </div>
