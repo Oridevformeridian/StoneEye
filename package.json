@@ -2,18 +2,19 @@
   "name": "stoneeye",
   "version": "1.0.0",
   "description": "",
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest",
+    "test": "vitest run --reporter=dot",
     "type-check": "echo 'Type checking skipped for now'"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "vitest": "^1.0.0",
+    "vitest": "^2.1.0",
     "@tailwindcss/postcss": "^4.1.17",
     "@vitejs/plugin-react": "^5.1.1",
     "autoprefixer": "^10.4.22",
