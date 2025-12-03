@@ -13,10 +13,12 @@ describe('logParser', () => {
     const p = parsed[0];
     expect(p.id).toBe(22717);
     expect(p.npc).toBe('NPC_Ragabir');
-    expect(p.vendorName).toBe('SoulMates');
-    expect(p.loyalty).toBe(57334);
-    expect(p.balance).toBe(1764962987140);
-    expect(p.resettimer).toBe(60000);
+    expect(p.vendorName).toBe('NPC_Ragabir');
+    expect(p.favorLabel).toBe('SoulMates');
+    expect(p.favor).toBe(3032.843);
+    expect(p.balance).toBe(57334);
+    expect(p.resetTimer).toBe(1764962987140);
+    expect(p.maxBalance).toBe(60000);
   });
 
   test('vendor without prior interaction uses unknown_<id> npc', () => {
