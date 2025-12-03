@@ -24,46 +24,6 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
     const [showQuestList, setShowQuestList] = useState(false);
     const [confirmPurgeVendors, setConfirmPurgeVendors] = useState(false);
 
-    useEffect(() => {
-        const loadChars = () => {
-            const chars = new Set();
-            for (let i = 0; i < localStorage.length; i++) {
-                const key = localStorage.key(i);
-                if (key.startsWith('gorgon_character_')) {
-                    chars.add(key.replace('gorgon_character_', ''));
-                }
-                if (key.startsWith('gorgon_inventory_')) {
-                    chars.add(key.replace('gorgon_inventory_', ''));
-                }
-            }
-            const charList = Array.from(chars).sort();
-            setAvailableChars(charList);
-            if (charList.length > 0 && !selectedCharId) {
-                setSelectedCharId(charList[0]);
-            }
-            setLoading(false);
-        };
-        loadChars();
-    }, []);
-
-    // Helper: split CamelCase / PascalCase / snake_case into words
-    const splitNameToWords = (name) => {
-        if (!name) return [''];
-        // Replace underscores and hyphens with spaces first
-        const cleaned = name.replace(/[_\-]+/g, ' ');
-        // Match sequences: capitals followed by lowercases, consecutive capitals, or numbers
-        const matches = cleaned.match(/[A-Z]{2,}(?=[A-Z][a-z]|\b)|[A-Z]?[a-z]+|[0-9]+/g);
-        if (matches && matches.length > 0) return matches;
-        // Fallback: split on spaces
-        return cleaned.split(/\s+/);
-    };
-
-    const wikiSearchUrlFor = (questName) => {
-        const words = splitNameToWords(questName).map(w => encodeURIComponent(w.toLowerCase()));
-        const q = words.join('+');
-        return `https://wiki.projectgorgon.com/w/index.php?search=${q}&title=Special%3ASearch&go=Go`;
-    };
-
     const handleCharLogUpload = async (e) => {
         const files = Array.from(e.target.files || []);
         if (files.length === 0 || !selectedCharId) return;
@@ -107,6 +67,46 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
             await db.objects.bulkDelete(ids);
             setConfirmPurgeVendors(false);
         } catch (err) { console.error('Vendor purge error', err); }
+    };
+
+    useEffect(() => {
+        const loadChars = () => {
+            const chars = new Set();
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key.startsWith('gorgon_character_')) {
+                    chars.add(key.replace('gorgon_character_', ''));
+                }
+                if (key.startsWith('gorgon_inventory_')) {
+                    chars.add(key.replace('gorgon_inventory_', ''));
+                }
+            }
+            const charList = Array.from(chars).sort();
+            setAvailableChars(charList);
+            if (charList.length > 0 && !selectedCharId) {
+                setSelectedCharId(charList[0]);
+            }
+            setLoading(false);
+        };
+        loadChars();
+    }, []);
+
+    // Helper: split CamelCase / PascalCase / snake_case into words
+    const splitNameToWords = (name) => {
+        if (!name) return [''];
+        // Replace underscores and hyphens with spaces first
+        const cleaned = name.replace(/[_\-]+/g, ' ');
+        // Match sequences: capitals followed by lowercases, consecutive capitals, or numbers
+        const matches = cleaned.match(/[A-Z]{2,}(?=[A-Z][a-z]|\b)|[A-Z]?[a-z]+|[0-9]+/g);
+        if (matches && matches.length > 0) return matches;
+        // Fallback: split on spaces
+        return cleaned.split(/\s+/);
+    };
+
+    const wikiSearchUrlFor = (questName) => {
+        const words = splitNameToWords(questName).map(w => encodeURIComponent(w.toLowerCase()));
+        const q = words.join('+');
+        return `https://wiki.projectgorgon.com/w/index.php?search=${q}&title=Special%3ASearch&go=Go`;
     };
 
     useEffect(() => {
