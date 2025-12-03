@@ -15,8 +15,24 @@ export default function IngestView({ onIngestComplete, autoStart }) {
     const [logs, setLogs] = useState([]);
     const [confirmPurge, setConfirmPurge] = useState(false);
     const [confirmPurgeAll, setConfirmPurgeAll] = useState(false);
+    const [hasCharacterData, setHasCharacterData] = useState(false);
 
     const addLog = (msg) => setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev]);
+
+    const checkCharacterData = () => {
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key.startsWith('gorgon_character_')) {
+                setHasCharacterData(true);
+                return;
+            }
+        }
+        setHasCharacterData(false);
+    };
+
+    useEffect(() => {
+        checkCharacterData();
+    }, []);
 
     const processJson = async (filename, jsonData) => {
         const typeName = filename.replace('.json', '');
@@ -301,10 +317,36 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                 {!corsError && !loading && (
                     <div className="mt-6 pt-6 border-t border-slate-700">
                         <div className="mb-4">
-                            <div className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Log Import / Parse</div>
-                            <div className="p-4 border-2 border-dashed border-slate-600 rounded-lg text-center hover:border-indigo-500 transition-colors mb-3">
-                                <input type="file" multiple accept=".log,.txt" onChange={handleLogUpload} className="hidden" id="log-upload" />
-                                <label htmlFor="log-upload" className="cursor-pointer text-sm text-slate-300 hover:text-white block">Click to select player log(s) and parse</label>
+                            <div className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider flex items-center gap-2">
+                                Log Import / Parse
+                                {!hasCharacterData && (
+                                    <span className="text-[10px] text-amber-500 font-normal normal-case">(Import Character JSON first)</span>
+                                )}
+                            </div>
+                            <div className={`p-4 border-2 border-dashed rounded-lg text-center transition-colors mb-3 ${
+                                hasCharacterData 
+                                    ? 'border-slate-600 hover:border-indigo-500 cursor-pointer' 
+                                    : 'border-slate-700 bg-slate-900/30 cursor-not-allowed opacity-50'
+                            }`}>
+                                <input 
+                                    type="file" 
+                                    multiple 
+                                    accept=".log,.txt" 
+                                    onChange={handleLogUpload} 
+                                    className="hidden" 
+                                    id="log-upload" 
+                                    disabled={!hasCharacterData}
+                                />
+                                <label 
+                                    htmlFor="log-upload" 
+                                    className={`text-sm block ${
+                                        hasCharacterData 
+                                            ? 'cursor-pointer text-slate-300 hover:text-white' 
+                                            : 'cursor-not-allowed text-slate-500'
+                                    }`}
+                                >
+                                    Click to select player log(s) and parse
+                                </label>
                             </div>
                             {parsedLogs.length > 0 && (
                                 <div className="space-y-2">

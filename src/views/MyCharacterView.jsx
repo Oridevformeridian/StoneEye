@@ -417,13 +417,15 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     // Add NPCs from vendor logs
                     charVendors.forEach(v => {
                         const npcName = v.data.npc || v.name;
+                        // Clean display name by removing NPC_ prefix
+                        const displayName = npcName.startsWith('NPC_') ? npcName.replace('NPC_', '') : npcName;
                         if (!npcMap.has(npcName)) {
                             npcMap.set(npcName, {
                                 id: v.id,
-                                name: npcName,
+                                name: displayName,
                                 npc: v.data.npc,
                                 data: v.data,
-                                currentFavor: npcFavor[npcName] || 0,
+                                currentFavor: npcFavor[displayName] || npcFavor[npcName] || 0,
                                 storageVault: null,
                                 hasVendorLog: true
                             });
@@ -433,31 +435,32 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     // Add NPCs from storage vaults (even if no vendor log)
                     Object.entries(storageUsage).forEach(([vaultKey, vaultData]) => {
                         if (vaultKey.startsWith('NPC_')) {
-                            const npcName = vaultKey.replace('NPC_', '');
+                            // vaultKey is like "NPC_Ragabir" which matches the npc name from vendor logs
                             const vData = vaultMap[vaultKey];
-                            const friendlyName = vData?.NpcFriendlyName || npcName;
+                            const friendlyName = vData?.NpcFriendlyName;
                             
                             // Check if we already have this NPC from vendor logs
-                            // Need to check against the extracted npcName since that's what matches
-                            const existingEntry = npcMap.get(npcName) || npcMap.get(friendlyName);
+                            // The vendor log uses the full "NPC_X" format, so check vaultKey directly
+                            const existingEntry = npcMap.get(vaultKey) || (friendlyName && npcMap.get(friendlyName));
                             
                             if (existingEntry) {
                                 // Update existing entry with storage data
                                 existingEntry.storageVault = vaultData;
                             } else {
                                 // Create entry for NPCs we have storage for but no vendor log
-                                npcMap.set(npcName, {
-                                    id: `storage_${npcName}`,
-                                    name: npcName,
-                                    npc: npcName,
+                                const displayName = friendlyName || vaultKey.replace('NPC_', '');
+                                npcMap.set(vaultKey, {
+                                    id: `storage_${vaultKey}`,
+                                    name: displayName,
+                                    npc: vaultKey,
                                     data: {
-                                        npc: npcName,
+                                        npc: vaultKey,
                                         favorLabel: 'Unknown',
                                         balance: 0,
                                         resetTimer: 0,
                                         maxBalance: 0
                                     },
-                                    currentFavor: npcFavor[npcName] || npcFavor[friendlyName] || 0,
+                                    currentFavor: npcFavor[displayName] || npcFavor[vaultKey] || 0,
                                     storageVault: vaultData,
                                     hasVendorLog: false
                                 });
