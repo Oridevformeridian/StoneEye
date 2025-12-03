@@ -64,54 +64,54 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
         return `https://wiki.projectgorgon.com/w/index.php?search=${q}&title=Special%3ASearch&go=Go`;
     };
 
+    const handleCharLogUpload = async (e) => {
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0 || !selectedCharId) return;
+        try {
+            for (const file of files) {
+                const parsed = await parseLogFileObject(file);
+                if (parsed && parsed.length > 0) {
+                    const entries = parsed.map(p => {
+                        const entryId = `${selectedCharId}_${p.id}_${p.vendorName}`;
+                        const name = p.vendorName || (`vendor_${p.id}`);
+                        const refs = [];
+                        refs.push(`character:${selectedCharId}`);
+                        if (p.npc) refs.push(`npc:${p.npc}`);
+                        if (p.vendorName) refs.push(`vendor:${p.vendorName}`);
+                        return {
+                            type: 'vendors',
+                            id: entryId,
+                            name,
+                            data: { ...p, character: selectedCharId },
+                            refs,
+                            category: 'vendor'
+                        };
+                    });
+                    await db.objects.bulkPut(entries);
+                }
+            }
+        } catch (err) { console.error('Log import error', err); }
+    };
+
+    const handlePurgeVendorLogs = async () => {
+        if (!confirmPurgeVendors) {
+            setConfirmPurgeVendors(true);
+            setTimeout(() => setConfirmPurgeVendors(false), 4000);
+            return;
+        }
+        if (!selectedCharId) return;
+        try {
+            const vendorEntries = await db.objects.where('type').equals('vendors').toArray();
+            const toPurge = vendorEntries.filter(e => e.data && e.data.character === selectedCharId);
+            const ids = toPurge.map(e => [e.type, e.id]);
+            await db.objects.bulkDelete(ids);
+            setConfirmPurgeVendors(false);
+        } catch (err) { console.error('Vendor purge error', err); }
+    };
+
     useEffect(() => {
         if (!selectedCharId && !showAllInventory) return;
         setLoading(true);
-
-        const handleCharLogUpload = async (e) => {
-            const files = Array.from(e.target.files || []);
-            if (files.length === 0 || !selectedCharId) return;
-            try {
-                for (const file of files) {
-                    const parsed = await parseLogFileObject(file);
-                    if (parsed && parsed.length > 0) {
-                        const entries = parsed.map(p => {
-                            const entryId = `${selectedCharId}_${p.id}_${p.vendorName}`;
-                            const name = p.vendorName || (`vendor_${p.id}`);
-                            const refs = [];
-                            refs.push(`character:${selectedCharId}`);
-                            if (p.npc) refs.push(`npc:${p.npc}`);
-                            if (p.vendorName) refs.push(`vendor:${p.vendorName}`);
-                            return {
-                                type: 'vendors',
-                                id: entryId,
-                                name,
-                                data: { ...p, character: selectedCharId },
-                                refs,
-                                category: 'vendor'
-                            };
-                        });
-                        await db.objects.bulkPut(entries);
-                    }
-                }
-            } catch (err) { console.error('Log import error', err); }
-        };
-
-        const handlePurgeVendorLogs = async () => {
-            if (!confirmPurgeVendors) {
-                setConfirmPurgeVendors(true);
-                setTimeout(() => setConfirmPurgeVendors(false), 4000);
-                return;
-            }
-            if (!selectedCharId) return;
-            try {
-                const vendorEntries = await db.objects.where('type').equals('vendors').toArray();
-                const toPurge = vendorEntries.filter(e => e.data && e.data.character === selectedCharId);
-                const ids = toPurge.map(e => [e.type, e.id]);
-                await db.objects.bulkDelete(ids);
-                setConfirmPurgeVendors(false);
-            } catch (err) { console.error('Vendor purge error', err); }
-        };
 
         const loadData = async () => {
             try {
