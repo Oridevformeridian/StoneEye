@@ -23,6 +23,8 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
     const [questStats, setQuestStats] = useState({});
     const [showQuestList, setShowQuestList] = useState(false);
     const [confirmPurgeVendors, setConfirmPurgeVendors] = useState(false);
+    const [vendorData, setVendorData] = useState([]);
+    const [hideNoStorage, setHideNoStorage] = useState(false);
 
     const handleCharLogUpload = async (e) => {
         const files = Array.from(e.target.files || []);
@@ -403,6 +405,31 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     setQuestStats({});
                 }
 
+                // --- Vendor Data Loading ---
+                if (currentCharData && selectedCharId) {
+                    const vendorEntries = await db.objects.where('type').equals('vendors').toArray();
+                    const charVendors = vendorEntries.filter(e => e.refs && e.refs.includes(`character:${selectedCharId}`));
+                    
+                    const vendorList = charVendors.map(v => {
+                        const npcFavor = currentCharData.data.NpcFavor || {};
+                        const npcName = v.data.npc || v.data.vendorName;
+                        const currentFavor = npcFavor[npcName] || 0;
+                        
+                        // Find storage vault if exists
+                        const storageVault = storageMeta[`NPC_${npcName}`] || storageMeta[npcName];
+                        
+                        return {
+                            ...v,
+                            currentFavor,
+                            storageVault: storageVault || null
+                        };
+                    });
+                    
+                    setVendorData(vendorList);
+                } else {
+                    setVendorData([]);
+                }
+
             } catch (err) {
                 console.error("Error loading char data", err);
             } finally {
@@ -521,7 +548,7 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                 <div className="flex bg-slate-800 rounded p-1 gap-1 self-start md:self-auto">
                     <button onClick={()=>setActiveTab('stats')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='stats'?'bg-indigo-600 text-white':'text-slate-400'}`}>Stats</button>
                     <button onClick={()=>setActiveTab('skills')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='skills'?'bg-indigo-600 text-white':'text-slate-400'}`}>Skills</button>
-                    <button onClick={()=>setActiveTab('storage')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='storage'?'bg-indigo-600 text-white':'text-slate-400'}`}>Storage</button>
+                    <button onClick={()=>setActiveTab('npcs')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='npcs'?'bg-indigo-600 text-white':'text-slate-400'}`}>NPCs</button>
                     <button onClick={()=>setActiveTab('inventory')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='inventory'?'bg-indigo-600 text-white':'text-slate-400'}`}>Inventory</button>
                 </div>
             </div>
@@ -687,105 +714,123 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                 </div>
             )}
 
-            {activeTab === 'storage' && (
+            {activeTab === 'npcs' && (
                 <div className="flex flex-col h-full overflow-hidden">
-                    {storageFilter ? (
-                        <div className="flex flex-col h-full">
-                             <div className="flex gap-2 mb-4 shrink-0">
-                                <button 
-                                    onClick={() => setStorageFilter(null)}
-                                    className="bg-indigo-600 text-white px-3 rounded text-xs font-bold flex items-center gap-2 hover:bg-indigo-500"
-                                >
-                                    <Icon name="arrow-left" className="w-3 h-3" /> Back
-                                </button>
-                                <div className="flex-1 text-sm font-bold text-slate-200 flex items-center bg-slate-800 px-3 rounded">
-                                    {storageFilter.replace('NPC_', '').replace('AccountStorage_', 'Shared ')}
-                                </div>
-                             </div>
-                             <div className="flex-1 overflow-y-auto">
-                                <table className="w-full text-left text-sm">
-                                    <thead className="text-slate-500 text-xs uppercase bg-slate-900 sticky top-0 z-10">
-                                        <tr>
-                                            <th className="p-2">Item</th>
-                                            <th className="p-2 text-right">Qty</th>
-                                            <th className="p-2 text-right">Value</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-800">
-                                        {sortedInventory.map((item, i) => (
-                                            <tr key={i} className="hover:bg-slate-800/30">
-                                                <td className="p-2 flex items-center gap-2">
-                                                    <button onClick={() => onNavigate('items', item.TypeID)} className="shrink-0 hover:opacity-80">
-                                                        <GameIcon iconId={item.icon} size="w-6 h-6" />
+                    <div className="flex justify-between items-center mb-4 shrink-0">
+                        <h3 className="text-lg font-light text-white">Character NPCs & Vendors</h3>
+                        <button 
+                            onClick={() => setHideNoStorage(!hideNoStorage)}
+                            className={`px-3 py-1 rounded border text-xs font-bold flex items-center gap-2 transition-colors ${hideNoStorage ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
+                        >
+                            {hideNoStorage ? <Icon name="check-square" className="w-4 h-4" /> : <Icon name="square" className="w-4 h-4" />}
+                            Storage Only
+                        </button>
+                    </div>
+                    
+                    <div className="overflow-y-auto h-full">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {vendorData
+                                .filter(v => !hideNoStorage || v.storageVault)
+                                .map(vendor => {
+                                    const soulMatesFavor = 6000;
+                                    const favorProgress = (vendor.currentFavor / soulMatesFavor) * 100;
+                                    const hasStorage = !!vendor.storageVault;
+                                    
+                                    // Calculate time until reset
+                                    const now = Date.now();
+                                    const resetTime = vendor.data.resettimer * 1000; // Convert to milliseconds
+                                    const timeUntilReset = resetTime - now;
+                                    const hoursUntilReset = Math.max(0, Math.floor(timeUntilReset / (1000 * 60 * 60)));
+                                    const minutesUntilReset = Math.max(0, Math.floor((timeUntilReset % (1000 * 60 * 60)) / (1000 * 60)));
+                                    
+                                    // Favor level coloring
+                                    let favorColor = 'bg-slate-600';
+                                    if (vendor.currentFavor >= 6000) favorColor = 'bg-pink-500';
+                                    else if (vendor.currentFavor >= 5000) favorColor = 'bg-purple-500';
+                                    else if (vendor.currentFavor >= 4000) favorColor = 'bg-blue-500';
+                                    else if (vendor.currentFavor >= 3000) favorColor = 'bg-green-500';
+                                    else if (vendor.currentFavor >= 2000) favorColor = 'bg-emerald-500';
+                                    else if (vendor.currentFavor >= 1000) favorColor = 'bg-yellow-500';
+                                    
+                                    return (
+                                        <div key={vendor.id} className="bg-slate-800/50 border border-slate-700 rounded p-4 hover:border-indigo-500 transition-all">
+                                            <div className="flex justify-between items-start mb-3">
+                                                <div className="flex-1">
+                                                    <button 
+                                                        onClick={() => onNavigate('npcs', vendor.data.npc || vendor.data.vendorName)}
+                                                        className="text-sm font-bold text-white hover:text-indigo-400 hover:underline text-left"
+                                                    >
+                                                        {vendor.data.vendorName || vendor.data.npc}
                                                     </button>
-                                                    <div className="flex flex-col min-w-0">
-                                                        <button 
-                                                            onClick={() => onNavigate('items', item.TypeID)}
-                                                            className={`text-left truncate hover:underline ${item.Rarity === 'Legendary' ? 'text-amber-400' : item.Rarity === 'Epic' ? 'text-purple-400' : item.Rarity === 'Rare' ? 'text-blue-400' : item.isLearnable ? 'text-red-500 font-bold' : 'text-slate-300'}`}
-                                                        >
-                                                            {item.Name}
-                                                        </button>
+                                                    <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wide mt-0.5">
+                                                        {vendor.data.npc !== vendor.data.vendorName && vendor.data.npc ? `NPC: ${vendor.data.npc}` : 'Vendor'}
                                                     </div>
-                                                </td>
-                                                <td className="p-2 text-right font-mono text-slate-400">{item.StackSize}</td>
-                                                <td className="p-2 text-right font-mono text-emerald-400 text-xs">{(item.Value * item.StackSize).toLocaleString()}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                             </div>
+                                                </div>
+                                            </div>
+                                            
+                                            {/* Favor Bar */}
+                                            <div className="mb-3">
+                                                <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                                                    <span className="font-bold uppercase tracking-wider">Favor to Soul Mates</span>
+                                                    <span className="font-mono">{vendor.currentFavor} / {soulMatesFavor}</span>
+                                                </div>
+                                                <div className="h-2 bg-slate-900 rounded-full overflow-hidden">
+                                                    <div 
+                                                        className={`h-full ${favorColor} transition-all duration-500`}
+                                                        style={{ width: `${Math.min(100, favorProgress)}%` }}
+                                                    />
+                                                </div>
+                                                <div className="text-right text-[9px] text-slate-500 mt-0.5 font-bold">
+                                                    {Math.round(favorProgress)}%
+                                                </div>
+                                            </div>
+                                            
+                                            {/* Vendor Info */}
+                                            <div className="space-y-2 mb-3">
+                                                <div className="flex justify-between text-xs">
+                                                    <span className="text-slate-400">Balance</span>
+                                                    <span className="text-emerald-400 font-mono font-bold">{vendor.data.balance?.toLocaleString() || 0}</span>
+                                                </div>
+                                                <div className="flex justify-between text-xs">
+                                                    <span className="text-slate-400">Restock Timer</span>
+                                                    <span className={`font-mono font-bold ${timeUntilReset > 0 ? 'text-amber-400' : 'text-green-400'}`}>
+                                                        {timeUntilReset > 0 ? `${hoursUntilReset}h ${minutesUntilReset}m` : 'Ready!'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            
+                                            {/* Storage Bar (if exists) */}
+                                            {hasStorage && (
+                                                <div className="pt-3 border-t border-slate-700/50">
+                                                    <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                                                        <span className="font-bold uppercase tracking-wider">Storage</span>
+                                                        <span className="font-mono">{vendor.storageVault.count} / {vendor.storageVault.max}</span>
+                                                    </div>
+                                                    <div className="h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                                                        <div 
+                                                            className={`h-full transition-all duration-500 ${
+                                                                (vendor.storageVault.count / vendor.storageVault.max) > 0.9 ? 'bg-red-500' : 
+                                                                (vendor.storageVault.count / vendor.storageVault.max) > 0.75 ? 'bg-amber-500' : 
+                                                                'bg-indigo-600'
+                                                            }`}
+                                                            style={{ width: `${Math.min(100, (vendor.storageVault.count / vendor.storageVault.max) * 100)}%` }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                         </div>
-                    ) : (
-                        <div className="overflow-y-auto h-full space-y-4">
-                            <div className="flex justify-end mb-2">
-                                <button 
-                                    onClick={() => setShowAllInventory(!showAllInventory)}
-                                    className={`px-3 py-1 rounded border text-xs font-bold flex items-center gap-2 transition-colors ${showAllInventory ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
-                                >
-                                    {showAllInventory ? <Icon name="check-square" className="w-4 h-4" /> : <Icon name="square" className="w-4 h-4" />}
-                                    Show Shared Storage
-                                </button>
+                        
+                        {vendorData.filter(v => !hideNoStorage || v.storageVault).length === 0 && (
+                            <div className="text-center py-12 text-slate-500">
+                                <Icon name="users" className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                                <div className="text-sm">No vendor data found.</div>
+                                <div className="text-xs mt-1">Import player logs from the Stats tab to see NPC data.</div>
                             </div>
-                            {Object.entries(storageByZone).sort().map(([zone, vaults]) => (
-                                <div key={zone}>
-                                    <h3 className="text-xs uppercase text-slate-500 font-bold mb-2 pl-1 sticky top-0 bg-slate-950 py-1 z-10">{zone}</h3>
-                                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
-                                        {vaults.map(v => {
-                                            const pct = v.max > 0 ? (v.count / v.max) * 100 : 0;
-                                            let colorClass = 'bg-indigo-600';
-                                            if (pct > 75) colorClass = 'bg-amber-500';
-                                            if (pct > 90) colorClass = 'bg-red-500';
-
-                                            return (
-                                                <button 
-                                                    key={v.id} 
-                                                    onClick={() => setStorageFilter(v.id)}
-                                                    className="bg-slate-800 border border-slate-700 rounded p-2 text-left hover:border-indigo-500 transition-all relative overflow-hidden group"
-                                                >
-                                                    <div className="relative z-10">
-                                                        <div className="text-xs font-bold text-slate-200 truncate mb-1 group-hover:text-white">
-                                                            {v.id.replace('NPC_', '').replace('AccountStorage_', 'Shared ')}
-                                                        </div>
-                                                        <div className="flex justify-between items-end">
-                                                            <div className="text-[10px] text-slate-400">
-                                                                {v.count} {v.max > 0 && <span className="text-slate-500">/ {v.max}</span>}
-                                                            </div>
-                                                            {v.max > 0 && <div className={`text-[9px] font-bold ${pct > 90 ? 'text-red-400' : 'text-indigo-300'}`}>{Math.round(pct)}%</div>}
-                                                        </div>
-                                                    </div>
-                                                    {v.max > 0 && (
-                                                        <div className="absolute bottom-0 left-0 h-1 w-full bg-slate-900">
-                                                            <div className={`h-full ${colorClass} transition-all duration-500`} style={{ width: `${pct}%` }}></div>
-                                                        </div>
-                                                    )}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                        )}
+                    </div>
                 </div>
             )}
 
