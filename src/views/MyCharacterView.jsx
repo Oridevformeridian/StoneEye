@@ -430,6 +430,14 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     const vendorEntries = await db.objects.where('type').equals('vendors').toArray();
                     const charVendors = vendorEntries.filter(e => e.refs && e.refs.includes(`character:${selectedCharId}`));
                     
+                    // Load NPC data to get SoulMateRequirement
+                    const allNpcs = await db.objects.where('type').equals('npcs').toArray();
+                    const npcDataMap = {};
+                    allNpcs.forEach(npc => {
+                        const internalName = npc.data.InternalName || npc.name;
+                        npcDataMap[internalName] = npc.data;
+                    });
+                    
                     const npcFavor = currentCharData.data.NpcFavor || {};
                     const npcMap = new Map();
                     
@@ -439,12 +447,19 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                         // Clean display name by removing NPC_ prefix
                         const displayName = npcName.startsWith('NPC_') ? npcName.replace('NPC_', '') : npcName;
                         if (!npcMap.has(npcName)) {
+                            // Use favor from log data if available, otherwise fall back to character data
+                            const logFavor = v.data.favor || 0;
+                            const charFavor = npcFavor[displayName] || npcFavor[npcName] || 0;
+                            // Get soul mate requirement from NPC data
+                            const npcInfo = npcDataMap[npcName] || npcDataMap[displayName];
+                            const soulMateReq = npcInfo?.SoulMateRequirement || 6000;
                             npcMap.set(npcName, {
                                 id: v.id,
                                 name: displayName,
                                 npc: v.data.npc,
                                 data: v.data,
-                                currentFavor: npcFavor[displayName] || npcFavor[npcName] || 0,
+                                currentFavor: logFavor || charFavor,
+                                soulMateRequirement: soulMateReq,
                                 storageVault: null,
                                 hasVendorLog: true
                             });
@@ -468,6 +483,8 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                             } else {
                                 // Create entry for NPCs we have storage for but no vendor log
                                 const displayName = friendlyName || vaultKey.replace('NPC_', '');
+                                const npcInfo = npcDataMap[vaultKey] || npcDataMap[displayName];
+                                const soulMateReq = npcInfo?.SoulMateRequirement || 6000;
                                 npcMap.set(vaultKey, {
                                     id: `storage_${vaultKey}`,
                                     name: displayName,
@@ -480,6 +497,7 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                         maxBalance: 0
                                     },
                                     currentFavor: npcFavor[displayName] || npcFavor[vaultKey] || 0,
+                                    soulMateRequirement: soulMateReq,
                                     storageVault: vaultData,
                                     hasVendorLog: false
                                 });
@@ -811,12 +829,12 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                             {vendorData
                                 .filter(v => !hideNoStorage || v.storageVault)
                                 .map(vendor => {
-                                    const soulMatesFavor = 6000;
+                                    const soulMatesFavor = 3000;
                                     const favorProgress = (vendor.currentFavor / soulMatesFavor) * 100;
                                     const hasStorage = !!vendor.storageVault;
                                     
-                                    // Convert UTC timestamp to local time
-                                    const resetDate = new Date(vendor.data.resetTimer * 1000);
+                                    // The timestamp is in milliseconds (not seconds)
+                                    const resetDate = new Date(vendor.data.resetTimer);
                                     const now = new Date();
                                     const timeUntilReset = Math.max(0, Math.floor((resetDate - now) / 1000));
                                     const hoursUntilReset = Math.floor(timeUntilReset / 3600);
@@ -835,14 +853,20 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                     const displayBalance = vendor.data.balance === 2147483647 ? 0 : vendor.data.balance;
                                     const displayMaxBalance = vendor.data.maxBalance === 2147483647 ? 0 : vendor.data.maxBalance;
                                     
-                                    // Favor level coloring
+                                    // Favor level coloring based on favor thresholds
                                     let favorColor = 'bg-slate-600';
-                                    if (vendor.currentFavor >= 6000) favorColor = 'bg-pink-500';
-                                    else if (vendor.currentFavor >= 5000) favorColor = 'bg-purple-500';
-                                    else if (vendor.currentFavor >= 4000) favorColor = 'bg-blue-500';
-                                    else if (vendor.currentFavor >= 3000) favorColor = 'bg-green-500';
-                                    else if (vendor.currentFavor >= 2000) favorColor = 'bg-emerald-500';
-                                    else if (vendor.currentFavor >= 1000) favorColor = 'bg-yellow-500';
+                                    let favorLevel = 'Neutral';
+                                    if (vendor.currentFavor >= 3000) { favorColor = 'bg-pink-500'; favorLevel = 'Soul Mates'; }
+                                    else if (vendor.currentFavor >= 2000) { favorColor = 'bg-purple-500'; favorLevel = 'Like Family'; }
+                                    else if (vendor.currentFavor >= 1200) { favorColor = 'bg-blue-500'; favorLevel = 'Best Friends'; }
+                                    else if (vendor.currentFavor >= 600) { favorColor = 'bg-green-500'; favorLevel = 'Close Friends'; }
+                                    else if (vendor.currentFavor >= 300) { favorColor = 'bg-emerald-500'; favorLevel = 'Friends'; }
+                                    else if (vendor.currentFavor >= 100) { favorColor = 'bg-yellow-500'; favorLevel = 'Comfortable'; }
+                                    else if (vendor.currentFavor >= 0) { favorColor = 'bg-slate-600'; favorLevel = 'Neutral'; }
+                                    else if (vendor.currentFavor >= -100) { favorColor = 'bg-orange-500'; favorLevel = 'Tolerated'; }
+                                    else if (vendor.currentFavor >= -300) { favorColor = 'bg-red-500'; favorLevel = 'Disliked'; }
+                                    else if (vendor.currentFavor >= -600) { favorColor = 'bg-red-700'; favorLevel = 'Hated'; }
+                                    else { favorColor = 'bg-red-900'; favorLevel = 'Despised'; }
                                     
                                     return (
                                         <div key={vendor.id} className="bg-slate-800/50 border border-slate-700 rounded p-4 hover:border-indigo-500 transition-all">

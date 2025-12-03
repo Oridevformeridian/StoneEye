@@ -34,6 +34,7 @@ export function parseLogContent(content) {
 
       const interaction = interactions.get(id);
       const npcName = interaction ? interaction.npcName : (`unknown_${id}`);
+      const favor = interaction ? interaction.favor : 0;
 
       results.push({
         id: Number(id),
@@ -41,6 +42,7 @@ export function parseLogContent(content) {
         npc: npcName,
         vendorName: npcName,
         favorLabel,
+        favor,
         balance,
         resetTimer,
         maxBalance,
