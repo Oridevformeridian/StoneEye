@@ -25,10 +25,15 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
     const [confirmPurgeVendors, setConfirmPurgeVendors] = useState(false);
     const [vendorData, setVendorData] = useState([]);
     const [hideNoStorage, setHideNoStorage] = useState(false);
+    const [vendorRefresh, setVendorRefresh] = useState(0);
 
     const handleCharLogUpload = async (e) => {
         const files = Array.from(e.target.files || []);
         if (files.length === 0 || !selectedCharId) return;
+        
+        let totalEntries = 0;
+        let filesProcessed = 0;
+        
         try {
             for (const file of files) {
                 const parsed = await parseLogFileObject(file);
@@ -50,9 +55,23 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                         };
                     });
                     await db.objects.bulkPut(entries);
+                    totalEntries += entries.length;
+                    filesProcessed++;
                 }
             }
-        } catch (err) { console.error('Log import error', err); }
+            
+            // Reload vendor data after import
+            if (filesProcessed > 0) {
+                console.log(`Imported ${totalEntries} vendor entries from ${filesProcessed} file(s)`);
+                // Force vendor data reload
+                setVendorRefresh(prev => prev + 1);
+            }
+        } catch (err) { 
+            console.error('Log import error', err);
+        }
+        
+        // Clear the file input
+        e.target.value = '';
     };
 
     const handlePurgeVendorLogs = async () => {
@@ -480,7 +499,7 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
             }
         };
         loadData();
-    }, [selectedCharId, showAllInventory, availableChars]);
+    }, [selectedCharId, showAllInventory, availableChars, vendorRefresh]);
 
     const handleSort = (key) => {
         let direction = 'asc';
@@ -765,13 +784,26 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                 <div className="flex flex-col h-full overflow-hidden">
                     <div className="flex justify-between items-center mb-4 shrink-0">
                         <h3 className="text-lg font-light text-white">Character NPCs & Vendors</h3>
-                        <button 
-                            onClick={() => setHideNoStorage(!hideNoStorage)}
-                            className={`px-3 py-1 rounded border text-xs font-bold flex items-center gap-2 transition-colors ${hideNoStorage ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
-                        >
-                            {hideNoStorage ? <Icon name="check-square" className="w-4 h-4" /> : <Icon name="square" className="w-4 h-4" />}
-                            Storage Only
-                        </button>
+                        <div className="flex gap-2">
+                            <label className="px-3 py-1 bg-indigo-600 text-white rounded text-xs font-bold hover:bg-indigo-500 cursor-pointer flex items-center gap-2">
+                                <Icon name="upload" className="w-4 h-4" />
+                                Upload Logs
+                                <input 
+                                    type="file" 
+                                    accept=".txt" 
+                                    multiple
+                                    onChange={handleCharLogUpload}
+                                    className="hidden"
+                                />
+                            </label>
+                            <button 
+                                onClick={() => setHideNoStorage(!hideNoStorage)}
+                                className={`px-3 py-1 rounded border text-xs font-bold flex items-center gap-2 transition-colors ${hideNoStorage ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
+                            >
+                                {hideNoStorage ? <Icon name="check-square" className="w-4 h-4" /> : <Icon name="square" className="w-4 h-4" />}
+                                Storage Only
+                            </button>
+                        </div>
                     </div>
                     
                     <div className="overflow-y-auto h-full">
@@ -783,11 +815,25 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                     const favorProgress = (vendor.currentFavor / soulMatesFavor) * 100;
                                     const hasStorage = !!vendor.storageVault;
                                     
-                                    // Calculate time until reset - resetTimer is in seconds (UTC timestamp)
-                                    const now = Math.floor(Date.now() / 1000); // Current time in seconds
-                                    const timeUntilReset = Math.max(0, vendor.data.resetTimer - now);
+                                    // Convert UTC timestamp to local time
+                                    const resetDate = new Date(vendor.data.resetTimer * 1000);
+                                    const now = new Date();
+                                    const timeUntilReset = Math.max(0, Math.floor((resetDate - now) / 1000));
                                     const hoursUntilReset = Math.floor(timeUntilReset / 3600);
                                     const minutesUntilReset = Math.floor((timeUntilReset % 3600) / 60);
+                                    
+                                    // Format reset time as local date/time
+                                    const resetTimeString = resetDate.toLocaleString('en-US', { 
+                                        month: 'short', 
+                                        day: 'numeric', 
+                                        hour: 'numeric', 
+                                        minute: '2-digit',
+                                        hour12: true 
+                                    });
+                                    
+                                    // Treat max int32 value as 0 balance
+                                    const displayBalance = vendor.data.balance === 2147483647 ? 0 : vendor.data.balance;
+                                    const displayMaxBalance = vendor.data.maxBalance === 2147483647 ? 0 : vendor.data.maxBalance;
                                     
                                     // Favor level coloring
                                     let favorColor = 'bg-slate-600';
@@ -836,21 +882,24 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                                 <div className="flex justify-between text-xs">
                                                     <span className="text-slate-400">Balance</span>
                                                     <span className="text-emerald-400 font-mono font-bold">
-                                                        {vendor.data.balance?.toLocaleString() || 0}
-                                                        {vendor.data.maxBalance > 0 && (
-                                                            <span className="text-slate-500 text-[10px] ml-1">/ {vendor.data.maxBalance.toLocaleString()}</span>
+                                                        {displayBalance?.toLocaleString() || 0}
+                                                        {displayMaxBalance > 0 && (
+                                                            <span className="text-slate-500 text-[10px] ml-1">/ {displayMaxBalance.toLocaleString()}</span>
                                                         )}
                                                     </span>
                                                 </div>
                                                 <div className="flex justify-between text-xs">
                                                     <span className="text-slate-400">Restock Timer</span>
-                                                    <span className={`font-mono font-bold ${
-                                                        timeUntilReset <= 0 ? 'text-green-400' : 
-                                                        timeUntilReset < 3600 ? 'text-yellow-400' : 
-                                                        'text-amber-400'
-                                                    }`}>
-                                                        {timeUntilReset > 0 ? `${hoursUntilReset}h ${minutesUntilReset}m` : 'Ready!'}
-                                                    </span>
+                                                    <div className="text-right">
+                                                        <div className={`font-mono font-bold ${
+                                                            timeUntilReset <= 0 ? 'text-green-400' : 
+                                                            timeUntilReset < 3600 ? 'text-yellow-400' : 
+                                                            'text-amber-400'
+                                                        }`}>
+                                                            {timeUntilReset > 0 ? `${hoursUntilReset}h ${minutesUntilReset}m` : 'Ready!'}
+                                                        </div>
+                                                        <div className="text-[9px] text-slate-500 mt-0.5">{resetTimeString}</div>
+                                                    </div>
                                                 </div>
                                             </div>
                                             
