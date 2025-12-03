@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run --reporter=dot",
+    "lint": "eslint . --ext .js,.jsx --max-warnings=0",
     "type-check": "echo 'Type checking skipped for now'"
   },
   "keywords": [],
@@ -15,6 +16,9 @@
   "license": "ISC",
   "devDependencies": {
     "vitest": "^2.1.0",
+    "eslint": "^9.13.0",
+    "eslint-plugin-react": "^7.37.2",
+    "eslint-plugin-react-hooks": "^4.6.0",
     "@tailwindcss/postcss": "^4.1.17",
     "@vitejs/plugin-react": "^5.1.1",
     "autoprefixer": "^10.4.22",
