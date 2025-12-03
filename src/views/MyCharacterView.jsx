@@ -25,6 +25,7 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
     const [confirmPurgeVendors, setConfirmPurgeVendors] = useState(false);
     const [vendorData, setVendorData] = useState([]);
     const [hideNoStorage, setHideNoStorage] = useState(false);
+    const [hideSoulMates, setHideSoulMates] = useState(false);
     const [vendorRefresh, setVendorRefresh] = useState(0);
 
     const handleCharLogUpload = async (e) => {
@@ -505,6 +506,37 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                         }
                     });
                     
+                    // Add NPCs from character favor data (even without vendor log or storage)
+                    Object.entries(npcFavor).forEach(([npcName, favor]) => {
+                        // Try both with and without NPC_ prefix
+                        const npcKey = npcName.startsWith('NPC_') ? npcName : `NPC_${npcName}`;
+                        const altKey = npcName.startsWith('NPC_') ? npcName.replace('NPC_', '') : npcName;
+                        
+                        if (!npcMap.has(npcKey) && !npcMap.has(altKey) && !npcMap.has(npcName)) {
+                            const displayName = npcName.startsWith('NPC_') ? npcName.replace('NPC_', '') : npcName;
+                            const npcInfo = npcDataMap[npcKey] || npcDataMap[npcName] || npcDataMap[displayName];
+                            const soulMateReq = npcInfo?.SoulMateRequirement || 6000;
+                            
+                            npcMap.set(npcKey, {
+                                id: `favor_${npcKey}`,
+                                name: displayName,
+                                npc: npcKey,
+                                data: {
+                                    npc: npcKey,
+                                    favorLabel: 'Unknown',
+                                    favor: favor,
+                                    balance: 0,
+                                    resetTimer: 0,
+                                    maxBalance: 0
+                                },
+                                currentFavor: favor,
+                                soulMateRequirement: soulMateReq,
+                                storageVault: null,
+                                hasVendorLog: false
+                            });
+                        }
+                    });
+                    
                     setVendorData(Array.from(npcMap.values()));
                 } else {
                     setVendorData([]);
@@ -821,13 +853,24 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                 {hideNoStorage ? <Icon name="check-square" className="w-4 h-4" /> : <Icon name="square" className="w-4 h-4" />}
                                 Storage Only
                             </button>
+                            <button 
+                                onClick={() => setHideSoulMates(!hideSoulMates)}
+                                className={`px-3 py-1 rounded border text-xs font-bold flex items-center gap-2 transition-colors ${hideSoulMates ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
+                            >
+                                {hideSoulMates ? <Icon name="check-square" className="w-4 h-4" /> : <Icon name="square" className="w-4 h-4" />}
+                                Hide Soul Mates
+                            </button>
                         </div>
                     </div>
                     
                     <div className="overflow-y-auto h-full">
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                             {vendorData
-                                .filter(v => !hideNoStorage || v.storageVault)
+                                .filter(v => {
+                                    if (hideNoStorage && !v.storageVault) return false;
+                                    if (hideSoulMates && v.currentFavor >= 3000) return false;
+                                    return true;
+                                })
                                 .map(vendor => {
                                     const soulMatesFavor = 3000;
                                     const favorProgress = (vendor.currentFavor / soulMatesFavor) * 100;
