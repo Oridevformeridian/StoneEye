@@ -323,31 +323,6 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                                     <span className="text-[10px] text-amber-500 font-normal normal-case">(Import Character JSON first)</span>
                                 )}
                             </div>
-                            <div className={`p-4 border-2 border-dashed rounded-lg text-center transition-colors mb-3 ${
-                                hasCharacterData 
-                                    ? 'border-slate-600 hover:border-indigo-500 cursor-pointer' 
-                                    : 'border-slate-700 bg-slate-900/30 cursor-not-allowed opacity-50'
-                            }`}>
-                                <input 
-                                    type="file" 
-                                    multiple 
-                                    accept=".log,.txt" 
-                                    onChange={handleLogUpload} 
-                                    className="hidden" 
-                                    id="log-upload" 
-                                    disabled={!hasCharacterData}
-                                />
-                                <label 
-                                    htmlFor="log-upload" 
-                                    className={`text-sm block ${
-                                        hasCharacterData 
-                                            ? 'cursor-pointer text-slate-300 hover:text-white' 
-                                            : 'cursor-not-allowed text-slate-500'
-                                    }`}
-                                >
-                                    Click to select player log(s) and parse
-                                </label>
-                            </div>
                             {parsedLogs.length > 0 && (
                                 <div className="space-y-2">
                                     {parsedLogs.map((p,i) => (

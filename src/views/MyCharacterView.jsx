@@ -808,7 +808,7 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                 Upload Logs
                                 <input 
                                     type="file" 
-                                    accept=".txt" 
+                                    accept=".txt,.log,*" 
                                     multiple
                                     onChange={handleCharLogUpload}
                                     className="hidden"
