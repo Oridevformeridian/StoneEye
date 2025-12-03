@@ -34,12 +34,12 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                 const parsed = await parseLogFileObject(file);
                 if (parsed && parsed.length > 0) {
                     const entries = parsed.map(p => {
-                        const entryId = `${selectedCharId}_${p.id}_${p.vendorName}`;
-                        const name = p.vendorName || (`vendor_${p.id}`);
+                        const entryId = `${selectedCharId}_${p.id}_${p.npc}`;
+                        const name = p.npc || (`vendor_${p.id}`);
                         const refs = [];
                         refs.push(`character:${selectedCharId}`);
                         if (p.npc) refs.push(`npc:${p.npc}`);
-                        if (p.vendorName) refs.push(`vendor:${p.vendorName}`);
+                        if (p.npc) refs.push(`vendor:${p.npc}`);
                         return {
                             type: 'vendors',
                             id: entryId,
@@ -217,6 +217,9 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     }
                 }
 
+                let storageUsage = {};
+                let storageCounts = { used: 0, shared: 0 };
+
                 if (itemsToProcess.length > 0) {
                     const knownRecipes = new Set();
                     if (selectedCharId) {
@@ -243,8 +246,6 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     
                     let invValue = 0;
                     const processedItems = [];
-                    const storageUsage = {}; 
-                    const storageCounts = { used: 0, shared: 0 };
 
                     itemsToProcess.forEach(item => {
                         let rawVaultName = (item.StorageVault || "Backpack").trim();
@@ -410,22 +411,64 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     const vendorEntries = await db.objects.where('type').equals('vendors').toArray();
                     const charVendors = vendorEntries.filter(e => e.refs && e.refs.includes(`character:${selectedCharId}`));
                     
-                    const vendorList = charVendors.map(v => {
-                        const npcFavor = currentCharData.data.NpcFavor || {};
-                        const npcName = v.data.npc || v.data.vendorName;
-                        const currentFavor = npcFavor[npcName] || 0;
-                        
-                        // Find storage vault if exists
-                        const storageVault = storageMeta[`NPC_${npcName}`] || storageMeta[npcName];
-                        
-                        return {
-                            ...v,
-                            currentFavor,
-                            storageVault: storageVault || null
-                        };
+                    const npcFavor = currentCharData.data.NpcFavor || {};
+                    const npcMap = new Map();
+                    
+                    // Add NPCs from vendor logs
+                    charVendors.forEach(v => {
+                        const npcName = v.data.npc || v.name;
+                        if (!npcMap.has(npcName)) {
+                            npcMap.set(npcName, {
+                                id: v.id,
+                                name: npcName,
+                                npc: v.data.npc,
+                                data: v.data,
+                                currentFavor: npcFavor[npcName] || 0,
+                                storageVault: null,
+                                hasVendorLog: true
+                            });
+                        }
                     });
                     
-                    setVendorData(vendorList);
+                    // Add NPCs from storage vaults (even if no vendor log)
+                    Object.entries(storageUsage).forEach(([vaultKey, vaultData]) => {
+                        if (vaultKey.startsWith('NPC_')) {
+                            const npcName = vaultKey.replace('NPC_', '');
+                            const vData = vaultMap[vaultKey];
+                            const friendlyName = vData?.NpcFriendlyName || npcName;
+                            
+                            // Check if we already have this NPC from vendor logs
+                            let found = false;
+                            for (const [key, value] of npcMap.entries()) {
+                                if (key === friendlyName || key === npcName) {
+                                    value.storageVault = vaultData;
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            
+                            if (!found) {
+                                // Create entry for NPCs we have storage for but no vendor log
+                                npcMap.set(friendlyName, {
+                                    id: `storage_${friendlyName}`,
+                                    name: friendlyName,
+                                    npc: friendlyName,
+                                    data: {
+                                        npc: friendlyName,
+                                        favorLabel: 'Unknown',
+                                        balance: 0,
+                                        resetTimer: 0,
+                                        maxBalance: 0
+                                    },
+                                    currentFavor: npcFavor[friendlyName] || 0,
+                                    storageVault: vaultData,
+                                    hasVendorLog: false
+                                });
+                            }
+                        }
+                    });
+                    
+                    setVendorData(Array.from(npcMap.values()));
                 } else {
                     setVendorData([]);
                 }
@@ -736,12 +779,11 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                     const favorProgress = (vendor.currentFavor / soulMatesFavor) * 100;
                                     const hasStorage = !!vendor.storageVault;
                                     
-                                    // Calculate time until reset
-                                    const now = Date.now();
-                                    const resetTime = vendor.data.resettimer * 1000; // Convert to milliseconds
-                                    const timeUntilReset = resetTime - now;
-                                    const hoursUntilReset = Math.max(0, Math.floor(timeUntilReset / (1000 * 60 * 60)));
-                                    const minutesUntilReset = Math.max(0, Math.floor((timeUntilReset % (1000 * 60 * 60)) / (1000 * 60)));
+                                    // Calculate time until reset - resetTimer is in seconds (UTC timestamp)
+                                    const now = Math.floor(Date.now() / 1000); // Current time in seconds
+                                    const timeUntilReset = Math.max(0, vendor.data.resetTimer - now);
+                                    const hoursUntilReset = Math.floor(timeUntilReset / 3600);
+                                    const minutesUntilReset = Math.floor((timeUntilReset % 3600) / 60);
                                     
                                     // Favor level coloring
                                     let favorColor = 'bg-slate-600';
@@ -757,13 +799,13 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                             <div className="flex justify-between items-start mb-3">
                                                 <div className="flex-1">
                                                     <button 
-                                                        onClick={() => onNavigate('npcs', vendor.data.npc || vendor.data.vendorName)}
+                                                        onClick={() => onNavigate('npcs', vendor.data.npc || vendor.name)}
                                                         className="text-sm font-bold text-white hover:text-indigo-400 hover:underline text-left"
                                                     >
-                                                        {vendor.data.vendorName || vendor.data.npc}
+                                                        {vendor.name}
                                                     </button>
                                                     <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wide mt-0.5">
-                                                        {vendor.data.npc !== vendor.data.vendorName && vendor.data.npc ? `NPC: ${vendor.data.npc}` : 'Vendor'}
+                                                        {vendor.data.favorLabel || 'Vendor'}
                                                     </div>
                                                 </div>
                                             </div>
@@ -789,11 +831,20 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                             <div className="space-y-2 mb-3">
                                                 <div className="flex justify-between text-xs">
                                                     <span className="text-slate-400">Balance</span>
-                                                    <span className="text-emerald-400 font-mono font-bold">{vendor.data.balance?.toLocaleString() || 0}</span>
+                                                    <span className="text-emerald-400 font-mono font-bold">
+                                                        {vendor.data.balance?.toLocaleString() || 0}
+                                                        {vendor.data.maxBalance > 0 && (
+                                                            <span className="text-slate-500 text-[10px] ml-1">/ {vendor.data.maxBalance.toLocaleString()}</span>
+                                                        )}
+                                                    </span>
                                                 </div>
                                                 <div className="flex justify-between text-xs">
                                                     <span className="text-slate-400">Restock Timer</span>
-                                                    <span className={`font-mono font-bold ${timeUntilReset > 0 ? 'text-amber-400' : 'text-green-400'}`}>
+                                                    <span className={`font-mono font-bold ${
+                                                        timeUntilReset <= 0 ? 'text-green-400' : 
+                                                        timeUntilReset < 3600 ? 'text-yellow-400' : 
+                                                        'text-amber-400'
+                                                    }`}>
                                                         {timeUntilReset > 0 ? `${hoursUntilReset}h ${minutesUntilReset}m` : 'Ready!'}
                                                     </span>
                                                 </div>

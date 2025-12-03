@@ -27,10 +27,10 @@ export function parseLogContent(content) {
     m = line.match(vendorRe);
     if (m) {
       const id = m[1];
-      const vendorName = m[2].trim();
-      const loyalty = Number(m[3]);
-      const balance = Number(m[4]);
-      const resettimer = Number(m[5]);
+      const favorLabel = m[2].trim();
+      const balance = Number(m[3]);
+      const resetTimer = Number(m[4]);
+      const maxBalance = Number(m[5]);
 
       const interaction = interactions.get(id);
       const npcName = interaction ? interaction.npcName : (`unknown_${id}`);
@@ -39,11 +39,11 @@ export function parseLogContent(content) {
         id: Number(id),
         time,
         npc: npcName,
-        vendorName,
-        loyaltyName: vendorName,
-        loyalty,
+        vendorName: npcName,
+        favorLabel,
         balance,
-        resettimer,
+        resetTimer,
+        maxBalance,
       });
     }
   }
