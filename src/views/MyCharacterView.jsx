@@ -438,29 +438,26 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                             const friendlyName = vData?.NpcFriendlyName || npcName;
                             
                             // Check if we already have this NPC from vendor logs
-                            let found = false;
-                            for (const [key, value] of npcMap.entries()) {
-                                if (key === friendlyName || key === npcName) {
-                                    value.storageVault = vaultData;
-                                    found = true;
-                                    break;
-                                }
-                            }
+                            // Need to check against the extracted npcName since that's what matches
+                            const existingEntry = npcMap.get(npcName) || npcMap.get(friendlyName);
                             
-                            if (!found) {
+                            if (existingEntry) {
+                                // Update existing entry with storage data
+                                existingEntry.storageVault = vaultData;
+                            } else {
                                 // Create entry for NPCs we have storage for but no vendor log
-                                npcMap.set(friendlyName, {
-                                    id: `storage_${friendlyName}`,
-                                    name: friendlyName,
-                                    npc: friendlyName,
+                                npcMap.set(npcName, {
+                                    id: `storage_${npcName}`,
+                                    name: npcName,
+                                    npc: npcName,
                                     data: {
-                                        npc: friendlyName,
+                                        npc: npcName,
                                         favorLabel: 'Unknown',
                                         balance: 0,
                                         resetTimer: 0,
                                         maxBalance: 0
                                     },
-                                    currentFavor: npcFavor[friendlyName] || 0,
+                                    currentFavor: npcFavor[npcName] || npcFavor[friendlyName] || 0,
                                     storageVault: vaultData,
                                     hasVendorLog: false
                                 });
