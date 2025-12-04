@@ -451,6 +451,11 @@ export default function App() {
                     <NavButton active={activeTab === 'treasure'} onClick={() => navigate('treasure')} icon="gem" label="Treasure Mods" />
                     <NavButton active={activeTab === 'ingest'} onClick={() => navigate('ingest')} icon="download" label="Import Data" />
                 </nav>
+                
+                {/* Commit hash watermark */}
+                <div className="hidden md:block fixed bottom-2 left-2 text-[10px] text-slate-700 font-mono select-none pointer-events-none z-50">
+                    {typeof __COMMIT_HASH__ !== 'undefined' ? __COMMIT_HASH__ : 'dev'}
+                </div>
             </div>
 
             {/* Mobile Content Area */}
