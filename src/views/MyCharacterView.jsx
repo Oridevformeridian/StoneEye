@@ -448,10 +448,18 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                         const npcName = v.data.npc || v.name;
                         // Clean display name by removing NPC_ prefix
                         const displayName = npcName.startsWith('NPC_') ? npcName.replace('NPC_', '') : npcName;
+                        
+                        console.log(`Processing vendor log: npcName="${npcName}", displayName="${displayName}", logFavor=${v.data.favor}`);
+                        
                         if (!npcMap.has(npcName)) {
                             // Use favor from log data if available, otherwise fall back to character data
                             const logFavor = v.data.favor || 0;
-                            const charFavor = npcFavor[displayName] || npcFavor[npcName] || 0;
+                            // Try matching with spaces added (e.g., DanielMurderdark -> Daniel Murderdark)
+                            const displayNameWithSpaces = displayName.replace(/([a-z])([A-Z])/g, '$1 $2');
+                            const charFavor = npcFavor[displayName] || npcFavor[displayNameWithSpaces] || npcFavor[npcName] || 0;
+                            
+                            console.log(`  Creating new entry: logFavor=${logFavor}, displayNameWithSpaces="${displayNameWithSpaces}", charFavor=${charFavor}, final=${logFavor || charFavor}`);
+                            
                             // Get soul mate requirement from NPC data
                             const npcInfo = npcDataMap[npcName] || npcDataMap[displayName];
                             const soulMateReq = npcInfo?.SoulMateRequirement || 6000;
@@ -465,6 +473,14 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                 storageVault: null,
                                 hasVendorLog: true
                             });
+                        } else {
+                            // Update existing entry with log data
+                            console.log(`  Updating existing entry`);
+                            const existing = npcMap.get(npcName);
+                            const logFavor = v.data.favor || 0;
+                            existing.data = v.data;
+                            existing.currentFavor = logFavor || existing.currentFavor;
+                            existing.hasVendorLog = true;
                         }
                     });
                     
@@ -896,6 +912,8 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                 .filter(v => {
                                     if (hideNoStorage && !v.storageVault) return false;
                                     if (hideSoulMates && v.currentFavor >= 3000) return false;
+                                    // Hide "Interaction" entries with 0 favor (likely items, not NPCs)
+                                    if (v.data.favorLabel === 'Interaction' && (v.currentFavor || 0) === 0) return false;
                                     return true;
                                 })
                                 .map(vendor => {

@@ -50,6 +50,25 @@ export function parseLogContent(content) {
     }
   }
 
+  // Add any interactions that didn't have a vendor screen
+  interactions.forEach((interaction) => {
+    // Check if we already added this interaction as a vendor entry
+    const alreadyAdded = results.some(r => r.id === interaction.id);
+    if (!alreadyAdded) {
+      results.push({
+        id: interaction.id,
+        time: interaction.time,
+        npc: interaction.npcName,
+        vendorName: interaction.npcName,
+        favorLabel: 'Interaction',
+        favor: interaction.favor,
+        balance: 0,
+        resetTimer: 0,
+        maxBalance: 0,
+      });
+    }
+  });
+
   return results;
 }
 

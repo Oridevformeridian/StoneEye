@@ -437,7 +437,7 @@ export default function App() {
                     <h1 className="text-xl font-bold text-indigo-400 flex items-center gap-2">
                         <Icon name="database" className="w-6 h-6" /> The Stone Eye
                     </h1>
-                    <p className="text-xs text-slate-500 mt-2">Full Corpus Explorer</p>
+                    <p className="text-xs text-slate-500 mt-2">Fantasy Matchmaker Service</p>
                 </div>
                 <nav className="flex-1 p-4 space-y-2">
                     <NavButton active={activeTab === 'explore'} onClick={() => navigate('explore')} icon="search" label="Explorer" />
