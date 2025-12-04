@@ -771,6 +771,51 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                 </button>
                             </div>
                         </div>
+                        <div className="bg-slate-800/50 p-4 rounded border border-slate-700 h-fit">
+                            <div className="text-xs uppercase text-slate-500 mb-2 font-bold">Vendors</div>
+                            {vendorData.length > 0 ? (
+                                <>
+                                    {(() => {
+                                        // Find next vendor to reset
+                                        const now = Date.now();
+                                        const vendorsWithTimers = vendorData.filter(v => v.data.resetTimer > now);
+                                        const nextReset = vendorsWithTimers.sort((a, b) => a.data.resetTimer - b.data.resetTimer)[0];
+                                        
+                                        // Calculate total balance
+                                        const totalBalance = vendorData.reduce((sum, v) => {
+                                            const balance = v.data.balance === 2147483647 ? 0 : (v.data.balance || 0);
+                                            return sum + balance;
+                                        }, 0);
+                                        
+                                        return (
+                                            <>
+                                                {nextReset && (
+                                                    <div className="mb-3 pb-3 border-b border-slate-700/50">
+                                                        <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Next Reset</div>
+                                                        <div className="text-sm text-white font-semibold">{nextReset.name}</div>
+                                                        <div className="text-xs text-slate-400 mt-1">
+                                                            {new Date(nextReset.data.resetTimer).toLocaleString('en-US', { 
+                                                                month: 'short', 
+                                                                day: 'numeric', 
+                                                                hour: 'numeric', 
+                                                                minute: '2-digit',
+                                                                hour12: true 
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                <div>
+                                                    <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Available Vendor Balance</div>
+                                                    <div className="text-lg text-emerald-400 font-bold">{totalBalance.toLocaleString()}</div>
+                                                </div>
+                                            </>
+                                        );
+                                    })()}
+                                </>
+                            ) : (
+                                <div className="text-xs text-slate-500">No vendor data imported</div>
+                            )}
+                        </div>
                     </div>
                     <div className="bg-slate-800/30 p-4 rounded border border-slate-700">
                         <div className="flex justify-between items-center mb-2">
