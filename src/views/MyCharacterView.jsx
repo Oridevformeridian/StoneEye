@@ -27,6 +27,7 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
     const [hideNoStorage, setHideNoStorage] = useState(false);
     const [hideSoulMates, setHideSoulMates] = useState(false);
     const [npcSort, setNpcSort] = useState('name');
+    const [notifyOnReset, setNotifyOnReset] = useState(false);
     const [vendorRefresh, setVendorRefresh] = useState(0);
 
     const handleCharLogUpload = async (e) => {
@@ -568,6 +569,42 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
         loadData();
     }, [selectedCharId, showAllInventory, availableChars, vendorRefresh]);
 
+    // Monitor for vendor resets and send notifications
+    useEffect(() => {
+        if (!notifyOnReset || vendorData.length === 0) return;
+
+        const checkResets = () => {
+            const now = Date.now();
+            vendorData.forEach(vendor => {
+                if (vendor.data.resetTimer && vendor.data.resetTimer > 0) {
+                    const timeUntilReset = vendor.data.resetTimer - now;
+                    // Notify if reset is within the next 60 seconds
+                    if (timeUntilReset > 0 && timeUntilReset <= 60000) {
+                        const notificationKey = `vendor_reset_${vendor.id}_${vendor.data.resetTimer}`;
+                        // Only notify once per vendor per reset time
+                        if (!sessionStorage.getItem(notificationKey)) {
+                            sessionStorage.setItem(notificationKey, 'true');
+                            if ('Notification' in window && Notification.permission === 'granted') {
+                                new Notification(`${vendor.name} vendor restock`, {
+                                    body: `Balance will reset to ${vendor.data.maxBalance === 2147483647 ? 0 : vendor.data.maxBalance.toLocaleString()} in ${Math.round(timeUntilReset / 1000)} seconds`,
+                                    icon: '/favicon.ico'
+                                });
+                            }
+                        }
+                    }
+                }
+            });
+        };
+
+        // Request notification permission if not already granted
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+
+        const interval = setInterval(checkResets, 30000); // Check every 30 seconds
+        return () => clearInterval(interval);
+    }, [notifyOnReset, vendorData]);
+
     const handleSort = (key) => {
         let direction = 'asc';
         if (sortConfig.key === key && sortConfig.direction === 'asc') {
@@ -886,6 +923,13 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                             >
                                 {hideSoulMates ? <Icon name="check-square" className="w-4 h-4" /> : <Icon name="square" className="w-4 h-4" />}
                                 Hide Soul Mates
+                            </button>
+                            <button 
+                                onClick={() => setNotifyOnReset(!notifyOnReset)}
+                                className={`px-3 py-1 rounded border text-xs font-bold flex items-center gap-2 transition-colors ${notifyOnReset ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
+                            >
+                                {notifyOnReset ? <Icon name="check-square" className="w-4 h-4" /> : <Icon name="square" className="w-4 h-4" />}
+                                Notify on Reset
                             </button>
                         </div>
                     </div>
