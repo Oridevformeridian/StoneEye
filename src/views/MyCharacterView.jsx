@@ -26,6 +26,7 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
     const [vendorData, setVendorData] = useState([]);
     const [hideNoStorage, setHideNoStorage] = useState(false);
     const [hideSoulMates, setHideSoulMates] = useState(false);
+    const [npcSort, setNpcSort] = useState('name');
     const [vendorRefresh, setVendorRefresh] = useState(0);
 
     const handleCharLogUpload = async (e) => {
@@ -834,7 +835,17 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                 <div className="flex flex-col h-full overflow-hidden">
                     <div className="flex justify-between items-center mb-4 shrink-0">
                         <h3 className="text-lg font-light text-white">Character NPCs & Vendors</h3>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 items-center">
+                            <select 
+                                value={npcSort} 
+                                onChange={(e) => setNpcSort(e.target.value)}
+                                className="px-3 py-1 bg-slate-800 border border-slate-700 text-slate-300 rounded text-xs font-bold hover:border-slate-600 focus:outline-none focus:border-indigo-500"
+                            >
+                                <option value="name">Name</option>
+                                <option value="favor">Favor</option>
+                                <option value="balance">Balance</option>
+                                <option value="emptySpace">Empty Space</option>
+                            </select>
                             <label className="px-3 py-1 bg-indigo-600 text-white rounded text-xs font-bold hover:bg-indigo-500 cursor-pointer flex items-center gap-2">
                                 <Icon name="upload" className="w-4 h-4" />
                                 Upload Logs
@@ -866,6 +877,22 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     <div className="overflow-y-auto h-full">
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                             {vendorData
+                                .sort((a, b) => {
+                                    if (npcSort === 'favor') {
+                                        return (b.currentFavor || 0) - (a.currentFavor || 0);
+                                    } else if (npcSort === 'balance') {
+                                        const aBalance = a.data.balance === 2147483647 ? 0 : (a.data.balance || 0);
+                                        const bBalance = b.data.balance === 2147483647 ? 0 : (b.data.balance || 0);
+                                        return bBalance - aBalance;
+                                    } else if (npcSort === 'emptySpace') {
+                                        const aEmpty = a.storageVault ? (a.storageVault.max - a.storageVault.count) : 0;
+                                        const bEmpty = b.storageVault ? (b.storageVault.max - b.storageVault.count) : 0;
+                                        return bEmpty - aEmpty;
+                                    } else {
+                                        // Default: sort by name
+                                        return (a.name || '').localeCompare(b.name || '');
+                                    }
+                                })
                                 .filter(v => {
                                     if (hideNoStorage && !v.storageVault) return false;
                                     if (hideSoulMates && v.currentFavor >= 3000) return false;
