@@ -5,7 +5,10 @@ export function parseLogContent(content) {
 
   const startRe = /ProcessStartInteraction\(\s*(\d+)\s*,\s*([^,]+?)\s*,\s*([0-9.]+)\s*,\s*([^,]+?)\s*,\s*([^,\)\s]+)\s*,?/;
   const vendorRe = /ProcessVendorScreen\(\s*(\d+)\s*,\s*([^,]+?)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,/;
+  const loginRe = /Logged in as character\s+(\S+)\./;
   const timeRe = /^\[(\d{2}:\d{2}:\d{2})\]\s*/;
+
+  let currentCharacter = null;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -13,14 +16,22 @@ export function parseLogContent(content) {
     const timeMatch = line.match(timeRe);
     const time = timeMatch ? timeMatch[1] : null;
 
-    let m = line.match(startRe);
+    // Check for character login
+    let m = line.match(loginRe);
+    if (m) {
+      currentCharacter = m[1];
+      console.log(`Detected character login: ${currentCharacter}`);
+      continue;
+    }
+
+    m = line.match(startRe);
     if (m) {
       const id = m[1];
       // second value currently unused
       const favor = parseFloat(m[3]);
       const flag = m[4].trim();
       const npcName = m[5].trim();
-      interactions.set(id, { id: Number(id), npcName, favor, flag, time });
+      interactions.set(id, { id: Number(id), npcName, favor, flag, time, character: currentCharacter });
       continue;
     }
 
@@ -35,6 +46,7 @@ export function parseLogContent(content) {
       const interaction = interactions.get(id);
       const npcName = interaction ? interaction.npcName : (`unknown_${id}`);
       const favor = interaction ? interaction.favor : 0;
+      const character = interaction ? interaction.character : currentCharacter;
 
       results.push({
         id: Number(id),
@@ -46,6 +58,7 @@ export function parseLogContent(content) {
         balance,
         resetTimer,
         maxBalance,
+        character,
       });
     }
   }
@@ -53,7 +66,7 @@ export function parseLogContent(content) {
   // Add any interactions that didn't have a vendor screen
   interactions.forEach((interaction) => {
     // Check if we already added this interaction as a vendor entry
-    const alreadyAdded = results.some(r => r.id === interaction.id);
+    const alreadyAdded = results.some(r => r.id === interaction.id && r.character === interaction.character);
     if (!alreadyAdded) {
       results.push({
         id: interaction.id,
@@ -65,6 +78,7 @@ export function parseLogContent(content) {
         balance: 0,
         resetTimer: 0,
         maxBalance: 0,
+        character: interaction.character,
       });
     }
   });

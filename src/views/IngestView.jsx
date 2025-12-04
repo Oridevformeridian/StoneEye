@@ -220,17 +220,49 @@ export default function IngestView({ onIngestComplete, autoStart }) {
 
                 // If we have parsed entries, ingest them into the DB
                 if (parsed && parsed.length > 0) {
+                    // Collect unique characters from the log
+                    const charactersInLog = new Set();
+                    parsed.forEach(p => {
+                        if (p.character) {
+                            charactersInLog.add(p.character);
+                        }
+                    });
+                    
+                    // Ensure minimal character records exist for each character
+                    charactersInLog.forEach(charName => {
+                        const charKey = `gorgon_character_${charName}`;
+                        if (!localStorage.getItem(charKey)) {
+                            // Create minimal character record
+                            const minimalChar = {
+                                Name: charName,
+                                Currencies: { GOLD: 0 },
+                                CurrentStats: { MAX_HEALTH: 0, MAX_POWER: 0, MAX_ARMOR: 0 },
+                                ActiveQuests: [],
+                                NpcFavor: {}
+                            };
+                            localStorage.setItem(charKey, JSON.stringify(minimalChar));
+                            addLog(`Created minimal character record for ${charName}`);
+                        }
+                    });
+                    
                     const entries = parsed.map(p => {
-                        const entryId = `${p.id}_${p.vendorName}`;
-                        const name = p.vendorName || (`vendor_${p.id}`);
+                        // Use the character from the log parser
+                        const character = p.character;
+                        if (!character) {
+                            console.warn('Entry without character context:', p);
+                        }
+                        
+                        const entryId = character ? `${character}_${p.id}_${p.npc}` : `${p.id}_${p.npc}`;
+                        const name = p.npc || (`vendor_${p.id}`);
                         const refs = [];
+                        if (character) refs.push(`character:${character}`);
                         if (p.npc) refs.push(`npc:${p.npc}`);
-                        if (p.vendorName) refs.push(`vendor:${p.vendorName}`);
+                        if (p.npc) refs.push(`vendor:${p.npc}`);
                         return {
                             type: 'vendors',
                             id: entryId,
                             name,
-                            data: p,
+                            data: { ...p, character },
                             refs,
                             category: 'vendor'
                         };
@@ -318,10 +350,24 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                     <div className="mt-6 pt-6 border-t border-slate-700">
                         <div className="mb-4">
                             <div className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider flex items-center gap-2">
-                                Log Import / Parse
-                                {!hasCharacterData && (
-                                    <span className="text-[10px] text-amber-500 font-normal normal-case">(Import Character JSON first)</span>
-                                )}
+                                Player Log Import
+                            </div>
+                            <div className="p-4 border-2 border-dashed border-slate-600 rounded-lg text-center hover:border-indigo-500 transition-colors mb-3">
+                                <input 
+                                    type="file" 
+                                    multiple 
+                                    accept=".log,.txt,*" 
+                                    onChange={handleLogUpload} 
+                                    className="hidden" 
+                                    id="log-upload" 
+                                />
+                                <label 
+                                    htmlFor="log-upload" 
+                                    className="cursor-pointer text-sm text-slate-300 hover:text-white block"
+                                >
+                                    Click to upload player log files
+                                </label>
+                                <div className="text-[10px] text-slate-500 mt-2">Automatically detects character from login events</div>
                             </div>
                             {parsedLogs.length > 0 && (
                                 <div className="space-y-2">
