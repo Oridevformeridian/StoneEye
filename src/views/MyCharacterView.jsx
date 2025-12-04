@@ -575,9 +575,26 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
 
         const checkResets = () => {
             const now = Date.now();
+            let updated = false;
+            
             vendorData.forEach(vendor => {
                 if (vendor.data.resetTimer && vendor.data.resetTimer > 0) {
                     const timeUntilReset = vendor.data.resetTimer - now;
+                    
+                    // If timer has passed, update balance to maxBalance
+                    if (timeUntilReset <= 0 && vendor.data.balance !== vendor.data.maxBalance) {
+                        vendor.data.balance = vendor.data.maxBalance;
+                        updated = true;
+                        
+                        // Update the database entry
+                        db.objects.get([vendor.type || 'vendors', vendor.id]).then(entry => {
+                            if (entry) {
+                                entry.data.balance = vendor.data.maxBalance;
+                                db.objects.put(entry);
+                            }
+                        });
+                    }
+                    
                     // Notify if reset is within the next 60 seconds
                     if (timeUntilReset > 0 && timeUntilReset <= 60000) {
                         const notificationKey = `vendor_reset_${vendor.id}_${vendor.data.resetTimer}`;
@@ -594,6 +611,11 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     }
                 }
             });
+            
+            // Force refresh if any balances were updated
+            if (updated) {
+                setVendorRefresh(prev => prev + 1);
+            }
         };
 
         // Request notification permission if not already granted
