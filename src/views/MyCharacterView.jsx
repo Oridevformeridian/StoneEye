@@ -966,17 +966,6 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                 <option value="balance">Balance</option>
                                 <option value="emptySpace">Empty Space</option>
                             </select>
-                            <label className="px-3 py-1 bg-indigo-600 text-white rounded text-xs font-bold hover:bg-indigo-500 cursor-pointer flex items-center gap-2">
-                                <Icon name="upload" className="w-4 h-4" />
-                                Upload Logs
-                                <input 
-                                    type="file" 
-                                    accept=".txt,.log,*" 
-                                    multiple
-                                    onChange={handleCharLogUpload}
-                                    className="hidden"
-                                />
-                            </label>
                             <button 
                                 onClick={() => setHideNoStorage(!hideNoStorage)}
                                 className={`px-3 py-1 rounded border text-xs font-bold flex items-center gap-2 transition-colors ${hideNoStorage ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400'}`}

@@ -31,7 +31,9 @@ export function parseLogContent(content) {
       const favor = parseFloat(m[3]);
       const flag = m[4].trim();
       const npcName = m[5].trim();
-      interactions.set(id, { id: Number(id), npcName, favor, flag, time, character: currentCharacter });
+      // Use character+id as key to prevent overwrites across characters
+      const interactionKey = `${currentCharacter}_${id}`;
+      interactions.set(interactionKey, { id: Number(id), npcName, favor, flag, time, character: currentCharacter });
       continue;
     }
 
@@ -43,7 +45,8 @@ export function parseLogContent(content) {
       const resetTimer = Number(m[4]);
       const maxBalance = Number(m[5]);
 
-      const interaction = interactions.get(id);
+      const interactionKey = `${currentCharacter}_${id}`;
+      const interaction = interactions.get(interactionKey);
       const npcName = interaction ? interaction.npcName : (`unknown_${id}`);
       const favor = interaction ? interaction.favor : 0;
       const character = interaction ? interaction.character : currentCharacter;
@@ -68,6 +71,7 @@ export function parseLogContent(content) {
     // Check if we already added this interaction as a vendor entry
     const alreadyAdded = results.some(r => r.id === interaction.id && r.character === interaction.character);
     if (!alreadyAdded) {
+      console.log(`Adding interaction without vendor screen: ${interaction.npcName} for ${interaction.character} (favor: ${interaction.favor})`);
       results.push({
         id: interaction.id,
         time: interaction.time,
@@ -82,6 +86,9 @@ export function parseLogContent(content) {
       });
     }
   });
+
+  console.log(`Parser completed: ${results.length} total entries`);
+  results.forEach(r => console.log(`  - ${r.npc} (${r.character}): favor=${r.favor}, label=${r.favorLabel}`));
 
   return results;
 }

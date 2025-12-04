@@ -228,20 +228,39 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                         }
                     });
                     
+                    addLog(`Found ${charactersInLog.size} characters: ${Array.from(charactersInLog).join(', ')}`);
+                    
                     // Ensure minimal character records exist for each character
                     charactersInLog.forEach(charName => {
                         const charKey = `gorgon_character_${charName}`;
+                        const invKey = `gorgon_inventory_${charName}`;
+                        
                         if (!localStorage.getItem(charKey)) {
-                            // Create minimal character record
+                            // Create minimal character record matching real export structure (with data wrapper)
                             const minimalChar = {
-                                Name: charName,
-                                Currencies: { GOLD: 0 },
-                                CurrentStats: { MAX_HEALTH: 0, MAX_POWER: 0, MAX_ARMOR: 0 },
-                                ActiveQuests: [],
-                                NpcFavor: {}
+                                data: {
+                                    Name: charName,
+                                    Currencies: { GOLD: 0 },
+                                    CurrentStats: { MAX_HEALTH: 0, MAX_POWER: 0, MAX_ARMOR: 0 },
+                                    ActiveQuests: [],
+                                    NpcFavor: {},
+                                    Skills: {}
+                                }
                             };
                             localStorage.setItem(charKey, JSON.stringify(minimalChar));
                             addLog(`Created minimal character record for ${charName}`);
+                        }
+                        
+                        if (!localStorage.getItem(invKey)) {
+                            // Create minimal inventory stub matching real export structure (with data wrapper)
+                            const minimalInv = {
+                                data: {
+                                    Inventory: {},
+                                    StorageVaults: {}
+                                }
+                            };
+                            localStorage.setItem(invKey, JSON.stringify(minimalInv));
+                            addLog(`Created minimal inventory record for ${charName}`);
                         }
                     });
                     

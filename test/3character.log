@@ -1,0 +1,35 @@
+[21:59:56] Vivox - LoginAsync(OraFam)
+[21:59:56] Logged in as character OraFam. Time UTC=12/04/2025 21:59:56. Timezone Offset -05:00:00
+EVENT(Ok): loginCharacter, numChars=3
+[22:00:35] LocalPlayer: ProcessStartInteraction(28938, 7, 1713.229, True, NPC_Fainor, )
+[22:00:35] LocalPlayer: ProcessPreTalkScreen(28938, PreTalkScreenInfo, )
+[22:00:35] LocalPlayer: ProcessTalkScreen(28938, , Welcome back!, , System.Int32[], System.String[], 0, Generic, )
+[22:00:49] Vivox - LoginAsync(tyriant)
+[22:00:49] Logged in as character tyriant. Time UTC=12/04/2025 22:00:49. Timezone Offset -05:00:00
+EVENT(Ok): loginCharacter, numChars=3
+[22:03:17] LocalPlayer: ProcessStartInteraction(28938, 7, 77.0028, True, NPC_Fainor, )
+[22:03:17] LocalPlayer: ProcessPreTalkScreen(28938, PreTalkScreenInfo, )
+[22:03:17] LocalPlayer: ProcessTalkScreen(28938, , You again? Well, a deal's a deal., , System.Int32[], System.String[], 0, Generic, )
+[22:03:28] LocalPlayer: ProcessStartInteraction(30425, 7, 552.611, True, NPC_Velkort, )
+[22:03:28] LocalPlayer: ProcessPreTalkScreen(30425, PreTalkScreenInfo, )
+[22:03:28] LocalPlayer: ProcessTalkScreen(30425, , That's a ridiculous shape you're in. You can't cast fire magic like that! Come back to me when you've got sensible appendages., , System.Int32[], System.String[], 0, Generic, )
+[22:03:28] entity_14802988: OnAttackHitMe(Barrage 2). Evaded = False
+[22:03:34] LocalPlayer: ProcessStartInteraction(30425, 7, 552.611, True, NPC_Velkort, )
+[22:03:34] LocalPlayer: ProcessPreTalkScreen(30425, PreTalkScreenInfo, )
+[22:03:34] LocalPlayer: ProcessTalkScreen(30425, , That's a ridiculous shape you're in. You can't cast fire magic like that! Come back to me when you've got sensible appendages., , System.Int32[], System.String[], 0, Generic, )
+[22:03:35] ClearCursor(SelectionController)
+[22:03:53] Vivox - LoginAsync(tyriant)
+[22:03:53] Logged in as character Calou. Time UTC=12/04/2025 22:03:53. Timezone Offset -05:00:00
+EVENT(Ok): loginCharacter, numChars=3
+[22:03:53] Vivox - LoginAsync(Calou)
+[22:03:53] Logged in as character Calou. Time UTC=12/04/2025 22:03:53. Timezone Offset -05:00:00
+EVENT(Ok): loginCharacter, numChars=3
+[22:04:17] LocalPlayer: ProcessStartInteraction(30278, 7, 1, True, NPC_MushroomJack, )
+[22:04:17] LocalPlayer: ProcessPreTalkScreen(30278, PreTalkScreenInfo, )
+[22:04:17] LocalPlayer: ProcessTalkScreen(30278, , So you've picked a shroomy huh? Pretty great feeling, wasn't it? Yanking the life right out of the ground?, , System.Int32[], System.String[], 0, Generic, )
+[22:04:22] LocalPlayer: ProcessStartInteraction(30278, 7, 1, True, NPC_MushroomJack, )
+[22:04:22] LocalPlayer: ProcessPreTalkScreen(30278, PreTalkScreenInfo, )
+[22:04:22] LocalPlayer: ProcessTalkScreen(30278, , So you've picked a shroomy huh? Pretty great feeling, wasn't it? Yanking the life right out of the ground?, , System.Int32[], System.String[], 0, Generic, )
+[22:05:13] LocalPlayer: ProcessStartInteraction(28938, 7, 1, True, NPC_Fainor, )
+[22:05:13] LocalPlayer: ProcessPreTalkScreen(28938, PreTalkScreenInfo, )
+[22:05:13] LocalPlayer: ProcessTalkScreen(28938, , Hiya! Welcome to the Chortling Beaver! Are you here to learn some of my trademark cooking techniques?, , System.Int32[], System.String[], 0, Generic, )
