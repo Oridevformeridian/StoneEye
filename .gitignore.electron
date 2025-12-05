@@ -1,0 +1,5 @@
+# Ignore Electron build output
+release/
+
+# Electron specific
+electron-builder.yml

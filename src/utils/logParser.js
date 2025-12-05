@@ -73,9 +73,16 @@ export function parseLogContent(content) {
       const favor = interaction ? interaction.favor : 0;
       const character = interaction ? interaction.character : currentCharacter;
 
+      // Build full timestamp for temporal ordering
+      const logDate = currentDate || fallbackDate;
+      const timestamp = time ? `${logDate}T${time}Z` : `${logDate}T00:00:00Z`;
+      const timestampMs = new Date(timestamp).getTime();
+
       results.push({
         id: Number(id),
         time,
+        timestamp,
+        timestampMs,
         npc: npcName,
         vendorName: npcName,
         favorLabel,
@@ -143,9 +150,15 @@ export function parseLogContent(content) {
     const alreadyAdded = results.some(r => r.id === interaction.id && r.character === interaction.character);
     if (!alreadyAdded) {
       console.log(`Adding interaction without vendor screen: ${interaction.npcName} for ${interaction.character} (favor: ${interaction.favor})`);
+      const logDate = currentDate || fallbackDate;
+      const timestamp = interaction.time ? `${logDate}T${interaction.time}Z` : `${logDate}T00:00:00Z`;
+      const timestampMs = new Date(timestamp).getTime();
+      
       results.push({
         id: interaction.id,
         time: interaction.time,
+        timestamp,
+        timestampMs,
         npc: interaction.npcName,
         vendorName: interaction.npcName,
         favorLabel: 'Interaction',

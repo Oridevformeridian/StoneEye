@@ -4,6 +4,7 @@ import { KNOWN_FILES } from '../constants/index.js';
 import Icon from '../components/Icon.jsx';
 import LoadingBar from '../components/LoadingBar.jsx';
 import { parseLogFileObject } from '../utils/logParser.js';
+import ElectronSettings from '../components/ElectronSettings.jsx';
 
 export default function IngestView({ onIngestComplete, autoStart }) {
     const [version, setVersion] = useState('439');
@@ -182,12 +183,16 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                 const json = JSON.parse(text);
                 
                 if (json.Report === 'CharacterSheet') {
-                    localStorage.setItem('gorgon_character_' + json.Character, JSON.stringify({ type: 'character', id: json.Character, data: json }));
-                    addLog(`Imported Character Sheet for ${json.Character}`);
+                    // Character sheet is authoritative - completely replace
+                    const charKey = `gorgon_character_${json.Character}`;
+                    localStorage.setItem(charKey, JSON.stringify({ type: 'character', id: json.Character, data: json }));
+                    addLog(`✓ Imported Character Sheet for ${json.Character} (authoritative)`);
                 } else if (json.Report === 'Storage') {
-                     const charName = json.Character || 'Unknown';
-                    localStorage.setItem('gorgon_inventory_' + charName, JSON.stringify({ type: 'inventory', id: charName, data: json }));
-                    addLog(`Imported Storage Data for ${charName}`);
+                    // Storage is authoritative - completely replace
+                    const charName = json.Character || 'Unknown';
+                    const invKey = `gorgon_inventory_${charName}`;
+                    localStorage.setItem(invKey, JSON.stringify({ type: 'inventory', id: charName, data: json }));
+                    addLog(`✓ Imported Storage for ${charName} (authoritative)`);
                 } else {
                     await processJson(file.name.toLowerCase(), json);
                 }
@@ -203,6 +208,42 @@ export default function IngestView({ onIngestComplete, autoStart }) {
     };
 
     const [parsedLogs, setParsedLogs] = useState([]);
+
+    // Expose JSON import handler for ElectronSettings
+    useEffect(() => {
+        window.handleJsonImport = async (file) => {
+            setLoading(true);
+            setStatus(`Processing ${file.name}`);
+            setCurrentFile(file.name);
+            try {
+                const text = await file.text();
+                const json = JSON.parse(text);
+                
+                if (json.Report === 'CharacterSheet') {
+                    // Character sheet is authoritative - completely replace existing data
+                    const charKey = `gorgon_character_${json.Character}`;
+                    localStorage.setItem(charKey, JSON.stringify({ type: 'character', id: json.Character, data: json }));
+                    addLog(`✓ Imported Character Sheet for ${json.Character} (authoritative)`);
+                } else if (json.Report === 'Storage') {
+                    // Storage is authoritative - completely replace existing inventory data
+                    const charName = json.Character || 'Unknown';
+                    const invKey = `gorgon_inventory_${charName}`;
+                    localStorage.setItem(invKey, JSON.stringify({ type: 'inventory', id: charName, data: json }));
+                    addLog(`✓ Imported Storage for ${charName} (authoritative - ${Object.keys(json.Inventory || {}).length} inventory slots, ${Object.keys(json.StorageVaults || {}).length} storage vaults)`);
+                } else {
+                    addLog(`⚠ Unknown report type in ${file.name}`);
+                }
+            } catch (err) {
+                addLog(`✗ Error: ${file.name} - ${err.message}`);
+            }
+            setLoading(false);
+            setStatus('Complete');
+        };
+        
+        return () => {
+            delete window.handleJsonImport;
+        };
+    }, []);
 
     const handleLogUpload = async (e) => {
         const files = Array.from(e.target.files || []);
@@ -267,8 +308,11 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                         }
                     });
                     
-                    const entries = parsed.map(p => {
-                        // Use the character from the log parser
+                    // Check timestamps and only update if data is newer
+                    const entriesToUpdate = [];
+                    let skippedStale = 0;
+                    
+                    for (const p of parsed) {
                         const character = p.character;
                         if (!character) {
                             console.warn('Entry without character context:', p);
@@ -280,22 +324,40 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                         if (character) refs.push(`character:${character}`);
                         if (p.npc) refs.push(`npc:${p.npc}`);
                         if (p.npc) refs.push(`vendor:${p.npc}`);
-                        return {
-                            type: 'vendors',
-                            id: entryId,
-                            name,
-                            data: { ...p, character },
-                            refs,
-                            category: 'vendor'
-                        };
-                    });
+                        
+                        const newTimestamp = p.timestampMs || 0;
+                        
+                        // Check if we already have this vendor
+                        const existing = await db.objects.get({ type: 'vendors', id: entryId });
+                        
+                        if (!existing || !existing.lastUpdated || newTimestamp >= existing.lastUpdated) {
+                            // New data is newer (or equal) - update it
+                            entriesToUpdate.push({
+                                type: 'vendors',
+                                id: entryId,
+                                name,
+                                data: { ...p, character },
+                                refs,
+                                category: 'vendor',
+                                lastUpdated: newTimestamp
+                            });
+                        } else {
+                            // Skip stale data
+                            skippedStale++;
+                        }
+                    }
 
                     try {
-                        await db.objects.bulkPut(entries);
-                        addLog(`Ingested ${entries.length} vendor entries from ${file.name}`);
+                        if (entriesToUpdate.length > 0) {
+                            await db.objects.bulkPut(entriesToUpdate);
+                            addLog(`✓ Ingested ${entriesToUpdate.length} vendor entries from ${file.name}`);
+                        }
+                        if (skippedStale > 0) {
+                            addLog(`⚠ Skipped ${skippedStale} stale vendor entries (newer data already exists)`);
+                        }
                     } catch (err) {
                         console.error('DB ingest error', err);
-                        addLog(`DB ingest error for ${file.name}`);
+                        addLog(`✗ DB ingest error for ${file.name}`);
                     }
                     
                     // Store transactions
@@ -376,9 +438,151 @@ export default function IngestView({ onIngestComplete, autoStart }) {
     };
 
     return (
-        <div className="p-8 max-w-md mx-auto">
+        <div className="p-8 max-w-6xl mx-auto">
             <h2 className="text-2xl font-light text-white mb-4">Data Import</h2>
-            <div className="bg-slate-800 rounded-xl p-6 shadow-lg border border-slate-700 mb-6">
+            
+            {!window.electron && (
+                <div className="mb-6 bg-indigo-900/30 border border-indigo-700/50 rounded-lg p-4">
+                    <div className="flex items-center gap-3">
+                        <Icon name="download" className="w-5 h-5 text-indigo-400" />
+                        <div className="flex-1">
+                            <div className="text-sm font-medium text-white">Want auto-import and log watching?</div>
+                            <div className="text-xs text-slate-400 mt-1">Download the desktop app for automatic log monitoring and imports</div>
+                        </div>
+                        <a 
+                            href="./assets/stoneeye_install.exe" 
+                            download
+                            className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded text-sm font-medium transition-colors whitespace-nowrap"
+                        >
+                            Download Desktop App
+                        </a>
+                    </div>
+                </div>
+            )}
+            
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                {window.electron && (
+                    <div>
+                        <h3 className="text-lg font-medium text-white mb-3">Desktop Auto-Watch</h3>
+                        <ElectronSettings onImportLog={async (file) => {
+                            setLoading(true);
+                            setStatus('Processing archived log');
+                            setCurrentFile(file.name);
+                            try {
+                                const parseResult = await parseLogFileObject(file);
+                                const parsed = parseResult.vendors || parseResult;
+                                const transactions = parseResult.transactions || [];
+                                
+                                setParsedLogs([{ file: file.name, parsed, transactions }]);
+                                addLog(`Parsed ${file.name}: ${parsed.length} entries, ${transactions.length} transactions`);
+
+                                if (parsed && parsed.length > 0) {
+                                    const charactersInLog = new Set();
+                                    parsed.forEach(p => {
+                                        if (p.character) charactersInLog.add(p.character);
+                                    });
+                                    
+                                    addLog(`Found ${charactersInLog.size} characters: ${Array.from(charactersInLog).join(', ')}`);
+                                    
+                                    charactersInLog.forEach(charName => {
+                                        const charKey = `gorgon_character_${charName}`;
+                                        const invKey = `gorgon_inventory_${charName}`;
+                                        
+                                        if (!localStorage.getItem(charKey)) {
+                                            const minimalChar = {
+                                                data: {
+                                                    Name: charName,
+                                                    Currencies: { GOLD: 0 },
+                                                    CurrentStats: { MAX_HEALTH: 0, MAX_POWER: 0, MAX_ARMOR: 0 },
+                                                    ActiveQuests: [],
+                                                    NpcFavor: {},
+                                                    Skills: {}
+                                                }
+                                            };
+                                            localStorage.setItem(charKey, JSON.stringify(minimalChar));
+                                            addLog(`Created minimal character record for ${charName}`);
+                                        }
+                                        
+                                        if (!localStorage.getItem(invKey)) {
+                                            const minimalInv = {
+                                                data: {
+                                                    Inventory: {},
+                                                    StorageVaults: {}
+                                                }
+                                            };
+                                            localStorage.setItem(invKey, JSON.stringify(minimalInv));
+                                            addLog(`Created minimal inventory record for ${charName}`);
+                                        }
+                                    });
+                                    
+                                    // Check timestamps and only update if data is newer
+                                    const entriesToUpdate = [];
+                                    let skippedStale = 0;
+                                    
+                                    for (const p of parsed) {
+                                        const character = p.character;
+                                        const entryId = character ? `${character}_${p.id}_${p.npc}` : `${p.id}_${p.npc}`;
+                                        const name = p.npc || (`vendor_${p.id}`);
+                                        const refs = [];
+                                        if (character) refs.push(`character:${character}`);
+                                        if (p.npc) refs.push(`npc:${p.npc}`, `vendor:${p.npc}`);
+                                        
+                                        const newTimestamp = p.timestampMs || 0;
+                                        
+                                        // Check if we already have this vendor
+                                        const existing = await db.objects.get({ type: 'vendors', id: entryId });
+                                        
+                                        if (!existing || !existing.lastUpdated || newTimestamp >= existing.lastUpdated) {
+                                            // New data is newer (or equal) - update it
+                                            entriesToUpdate.push({
+                                                type: 'vendors',
+                                                id: entryId,
+                                                name,
+                                                data: { ...p, character },
+                                                refs,
+                                                category: 'vendor',
+                                                lastUpdated: newTimestamp
+                                            });
+                                        } else {
+                                            // Skip stale data
+                                            skippedStale++;
+                                        }
+                                    }
+
+                                    if (entriesToUpdate.length > 0) {
+                                        await db.objects.bulkPut(entriesToUpdate);
+                                        addLog(`✓ Ingested ${entriesToUpdate.length} vendor entries from ${file.name}`);
+                                    }
+                                    if (skippedStale > 0) {
+                                        addLog(`⚠ Skipped ${skippedStale} stale vendor entries (newer data already exists)`);
+                                    }
+                                    
+                                    if (transactions && transactions.length > 0) {
+                                        const transactionEntries = transactions.map((t, idx) => ({
+                                            type: 'transactions',
+                                            id: `${t.character}_${t.timestamp}_${t.npcId}_${idx}`,
+                                            name: `Sale to ${t.npc}`,
+                                            data: t,
+                                            refs: [`character:${t.character}`, `npc:${t.npc}`],
+                                            category: 'transaction'
+                                        }));
+                                        
+                                        await db.objects.bulkPut(transactionEntries);
+                                        addLog(`Ingested ${transactionEntries.length} transactions from ${file.name}`);
+                                    }
+                                }
+                            } catch (err) {
+                                addLog(`Error parsing ${file.name}: ${err.message}`);
+                            }
+                            setLoading(false);
+                            setStatus('Complete');
+                        }} />
+                    </div>
+                )}
+                
+                <div className={window.electron ? '' : 'lg:col-span-2'}>
+                    <h3 className="text-lg font-medium text-white mb-3">Manual Import</h3>
+                    <div className="bg-slate-800 rounded-xl p-6 shadow-lg border border-slate-700">
                 <div className="flex gap-4 items-end mb-4">
                     <div className="flex-1">
                         <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Version</label>
@@ -442,7 +646,10 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                         </div>
                     </div>
                 )}
+                </div>
             </div>
+            </div>
+            
             <div className="bg-black/30 rounded-lg p-4 font-mono text-xs text-green-400 h-64 overflow-y-auto border border-slate-800">{logs.length === 0 ? <span className="opacity-50">Log output waiting...</span> : logs.map((l, i) => <div key={i}>{l}</div>)}</div>
         </div>
     );

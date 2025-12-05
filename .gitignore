@@ -1,11 +1,14 @@
 # Build output
 /dist/
 /dist/assets/
+/release/
 
 # Node
 node_modules/
 npm-debug.log*
 yarn-error.log*
+*.log
+.pnpm-store
 
 # Env
 .env
@@ -15,3 +18,21 @@ yarn-error.log*
 .vscode/
 .idea/
 .DS_Store
+*.swp
+*.swo
+*~
+
+# Testing
+coverage
+
+# Code Signing Certificates (NEVER COMMIT!)
+certs/
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+
+# Electron
+out
+electron-builder.yml
