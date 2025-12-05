@@ -5,6 +5,9 @@
   "plugins": ["react", "react-hooks"],
   "extends": ["eslint:recommended", "plugin:react/recommended"],
   "settings": { "react": { "version": "detect" } },
+  "globals": {
+    "__COMMIT_HASH__": "readonly"
+  },
   "rules": {
     "react/react-in-jsx-scope": "off",
     "react/prop-types": "off",
