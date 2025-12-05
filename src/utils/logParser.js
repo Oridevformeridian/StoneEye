@@ -5,6 +5,7 @@ export function parseLogContent(content) {
 
   const startRe = /ProcessStartInteraction\(\s*(\d+)\s*,\s*([^,]+?)\s*,\s*([0-9.]+)\s*,\s*([^,]+?)\s*,\s*([^,\)\s]+)\s*,?/;
   const vendorRe = /ProcessVendorScreen\(\s*(\d+)\s*,\s*([^,]+?)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,/;
+  const vendorUpdateRe = /ProcessVendorUpdateAvailableGold\(\s*(\d+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,/;
   const loginRe = /Logged in as character\s+(\S+)\./;
   const timeRe = /^\[(\d{2}:\d{2}:\d{2})\]\s*/;
 
@@ -63,6 +64,44 @@ export function parseLogContent(content) {
         maxBalance,
         character,
       });
+      continue;
+    }
+
+    // Check for vendor balance update (from transactions)
+    m = line.match(vendorUpdateRe);
+    if (m) {
+      const id = m[1];
+      const resetTimer = Number(m[2]);
+      const balance = Number(m[3]);
+
+      const interactionKey = `${currentCharacter}_${id}`;
+      const interaction = interactions.get(interactionKey);
+      const npcName = interaction ? interaction.npcName : (`unknown_${id}`);
+      const favor = interaction ? interaction.favor : 0;
+      const character = interaction ? interaction.character : currentCharacter;
+
+      // Only add if we don't already have a vendor screen entry for this character+id
+      const existingEntry = results.find(r => r.id === Number(id) && r.character === character);
+      if (existingEntry) {
+        // Update existing entry with new balance and timer
+        existingEntry.balance = balance;
+        existingEntry.resetTimer = resetTimer;
+        existingEntry.time = time; // Update timestamp to latest interaction
+      } else {
+        // Create new entry from transaction update
+        results.push({
+          id: Number(id),
+          time,
+          npc: npcName,
+          vendorName: npcName,
+          favorLabel: 'Transaction',
+          favor,
+          balance,
+          resetTimer,
+          maxBalance: balance, // Use current balance as max since we don't know the actual max
+          character,
+        });
+      }
     }
   }
 
