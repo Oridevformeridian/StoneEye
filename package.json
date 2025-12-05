@@ -23,13 +23,6 @@
     "directories": {
       "output": "release"
     },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "GITHUB_USERNAME",
-        "repo": "stoneeye"
-      }
-    ],
     "files": [
       "dist/**/*",
       "electron/**/*",
@@ -57,8 +50,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "build/icon.ico",
-      "publisherName": "StoneEye Development"
+      "icon": "electron/icon.ico"
     },
     "mac": {
       "target": [
@@ -108,7 +100,6 @@
     "chokidar": "^4.0.3",
     "dexie": "^4.2.1",
     "electron-store": "^10.0.0",
-    "electron-updater": "^6.6.2",
     "lucide-react": "^0.555.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"

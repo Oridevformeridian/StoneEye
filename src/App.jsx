@@ -17,7 +17,6 @@ import SkillDetail from './components/SkillDetail.jsx';
 import TreasureDetail from './components/TreasureDetail.jsx';
 import GenericDetail from './components/GenericDetail.jsx';
 import StatBox from './components/StatBox.jsx';
-import UpdateNotification from './components/UpdateNotification.jsx';
 
 // Views
 import IngestView from './views/IngestView.jsx';
@@ -533,9 +532,6 @@ export default function App() {
                             <MobileNavBtn active={activeTab === 'ingest'} onClick={() => navigate('ingest')} icon="download" label="Import" />
                 </div>
             </nav>
-            
-            {/* Update notification (Electron only) */}
-            {window.electron && <UpdateNotification />}
         </div>
     );
 }

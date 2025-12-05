@@ -17,10 +17,6 @@ contextBridge.exposeInMainWorld('electron', {
   // Reports scanning
   scanReportsDirectory: () => ipcRenderer.invoke('scan-reports-directory'),
   
-  // Updates
-  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
-  installUpdate: () => ipcRenderer.invoke('install-update'),
-  
   // Events
   onLogArchived: (callback) => {
     const subscription = (event, data) => callback(data);
@@ -36,25 +32,5 @@ contextBridge.exposeInMainWorld('electron', {
     const subscription = (event, data) => callback(data);
     ipcRenderer.on('auto-import-exports', subscription);
     return () => ipcRenderer.removeListener('auto-import-exports', subscription);
-  },
-  onUpdateAvailable: (callback) => {
-    const subscription = (event, info) => callback(info);
-    ipcRenderer.on('update-available', subscription);
-    return () => ipcRenderer.removeListener('update-available', subscription);
-  },
-  onUpdateReady: (callback) => {
-    const subscription = (event, info) => callback(info);
-    ipcRenderer.on('update-ready', subscription);
-    return () => ipcRenderer.removeListener('update-ready', subscription);
-  },
-  onUpdateError: (callback) => {
-    const subscription = (event, message) => callback(message);
-    ipcRenderer.on('update-error', subscription);
-    return () => ipcRenderer.removeListener('update-error', subscription);
-  },
-  onUpdateDownloadProgress: (callback) => {
-    const subscription = (event, progress) => callback(progress);
-    ipcRenderer.on('update-download-progress', subscription);
-    return () => ipcRenderer.removeListener('update-download-progress', subscription);
   }
 });

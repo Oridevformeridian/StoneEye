@@ -4,7 +4,6 @@ import { fileURLToPath } from 'url';
 import Store from 'electron-store';
 import chokidar from 'chokidar';
 import fs from 'fs/promises';
-import { autoUpdater } from 'electron-updater';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,13 +47,6 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow();
-  
-  // Check for updates (skip in development)
-  if (process.env.NODE_ENV !== 'development') {
-    setTimeout(() => {
-      autoUpdater.checkForUpdatesAndNotify();
-    }, 3000); // Wait 3 seconds after startup
-  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -82,50 +74,7 @@ app.on('window-all-closed', () => {
   }
 });
 
-// Auto-updater events
-autoUpdater.on('checking-for-update', () => {
-  console.log('Checking for update...');
-});
-
-autoUpdater.on('update-available', (info) => {
-  console.log('Update available:', info.version);
-  mainWindow.webContents.send('update-available', info);
-});
-
-autoUpdater.on('update-not-available', (info) => {
-  console.log('Update not available:', info.version);
-});
-
-autoUpdater.on('error', (err) => {
-  console.error('Update error:', err);
-  mainWindow.webContents.send('update-error', err.message);
-});
-
-autoUpdater.on('download-progress', (progressObj) => {
-  console.log(`Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}%`);
-  mainWindow.webContents.send('update-download-progress', progressObj);
-});
-
-autoUpdater.on('update-downloaded', (info) => {
-  console.log('Update downloaded:', info.version);
-  mainWindow.webContents.send('update-ready', info);
-});
-
 // IPC Handlers
-ipcMain.handle('check-for-updates', async () => {
-  try {
-    const result = await autoUpdater.checkForUpdates();
-    return result;
-  } catch (err) {
-    console.error('Error checking for updates:', err);
-    throw err;
-  }
-});
-
-ipcMain.handle('install-update', () => {
-  autoUpdater.quitAndInstall();
-});
-
 ipcMain.handle('get-settings', () => {
   return {
     logDirectory: store.get('logDirectory'),
