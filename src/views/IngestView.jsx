@@ -214,9 +214,12 @@ export default function IngestView({ onIngestComplete, autoStart }) {
             const file = files[i];
             setCurrentFile(file.name);
             try {
-                const parsed = await parseLogFileObject(file);
-                allParsed.push({ file: file.name, parsed });
-                addLog(`Parsed ${file.name}: ${parsed.length} entries`);
+                const parseResult = await parseLogFileObject(file);
+                const parsed = parseResult.vendors || parseResult; // Handle both old and new format
+                const transactions = parseResult.transactions || [];
+                
+                allParsed.push({ file: file.name, parsed, transactions });
+                addLog(`Parsed ${file.name}: ${parsed.length} entries, ${transactions.length} transactions`);
 
                 // If we have parsed entries, ingest them into the DB
                 if (parsed && parsed.length > 0) {
@@ -293,6 +296,26 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                     } catch (err) {
                         console.error('DB ingest error', err);
                         addLog(`DB ingest error for ${file.name}`);
+                    }
+                    
+                    // Store transactions
+                    if (transactions && transactions.length > 0) {
+                        const transactionEntries = transactions.map((t, idx) => ({
+                            type: 'transactions',
+                            id: `${t.character}_${t.timestamp}_${t.npcId}_${idx}`, // Add index to make unique
+                            name: `Sale to ${t.npc}`,
+                            data: t,
+                            refs: [`character:${t.character}`, `npc:${t.npc}`],
+                            category: 'transaction'
+                        }));
+                        
+                        try {
+                            await db.objects.bulkPut(transactionEntries);
+                            addLog(`Ingested ${transactionEntries.length} transactions from ${file.name}`);
+                        } catch (err) {
+                            console.error('Transaction ingest error', err);
+                            addLog(`Transaction ingest error for ${file.name}`);
+                        }
                     }
                 }
             } catch (err) {

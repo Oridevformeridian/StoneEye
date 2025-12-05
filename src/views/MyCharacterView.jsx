@@ -29,17 +29,25 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
     const [npcSort, setNpcSort] = useState('name');
     const [notifyOnReset, setNotifyOnReset] = useState(false);
     const [vendorRefresh, setVendorRefresh] = useState(0);
+    const [salesData, setSalesData] = useState([]);
+    const [allTransactions, setAllTransactions] = useState([]);
+    const [ledgerDate, setLedgerDate] = useState(null);
+    const [ledgerSort, setLedgerSort] = useState({ key: 'timestamp', direction: 'desc' });
 
     const handleCharLogUpload = async (e) => {
         const files = Array.from(e.target.files || []);
         if (files.length === 0 || !selectedCharId) return;
         
         let totalEntries = 0;
+        let totalTransactions = 0;
         let filesProcessed = 0;
         
         try {
             for (const file of files) {
-                const parsed = await parseLogFileObject(file);
+                const parseResult = await parseLogFileObject(file);
+                const parsed = parseResult.vendors || parseResult; // Handle both old and new format
+                const transactions = parseResult.transactions || [];
+                
                 if (parsed && parsed.length > 0) {
                     const entries = parsed.map(p => {
                         const entryId = `${selectedCharId}_${p.id}_${p.npc}`;
@@ -59,13 +67,28 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     });
                     await db.objects.bulkPut(entries);
                     totalEntries += entries.length;
+                    
+                    // Store transactions
+                    if (transactions && transactions.length > 0) {
+                        const transactionEntries = transactions.map((t, idx) => ({
+                            type: 'transactions',
+                            id: `${t.character}_${t.timestamp}_${t.npcId}_${idx}`, // Add index to make unique
+                            name: `Sale to ${t.npc}`,
+                            data: t,
+                            refs: [`character:${t.character}`, `npc:${t.npc}`],
+                            category: 'transaction'
+                        }));
+                        await db.objects.bulkPut(transactionEntries);
+                        totalTransactions += transactionEntries.length;
+                    }
+                    
                     filesProcessed++;
                 }
             }
             
             // Reload vendor data after import
             if (filesProcessed > 0) {
-                console.log(`Imported ${totalEntries} vendor entries from ${filesProcessed} file(s)`);
+                console.log(`Imported ${totalEntries} vendor entries and ${totalTransactions} transactions from ${filesProcessed} file(s)`);
                 // Force vendor data reload
                 setVendorRefresh(prev => prev + 1);
             }
@@ -559,6 +582,48 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                 } else {
                     setVendorData([]);
                 }
+                
+                // Load transaction history for sales chart
+                if (selectedCharId) {
+                    const allTransactions = await db.objects.where('type').equals('transactions').toArray();
+                    console.log(`Found ${allTransactions.length} total transactions in database`);
+                    
+                    const charTransactions = allTransactions.filter(t => t.refs && t.refs.includes(`character:${selectedCharId}`));
+                    console.log(`Found ${charTransactions.length} transactions for character ${selectedCharId}`);
+                    
+                    setAllTransactions(charTransactions);
+                    
+                    // Group by date and sum sales
+                    const dailySales = {};
+                    charTransactions.forEach(t => {
+                        const date = t.data.date;
+                        console.log(`Transaction: date=${date}, amount=${t.data.amount}, npc=${t.data.npc}`);
+                        if (date) {
+                            dailySales[date] = (dailySales[date] || 0) + t.data.amount;
+                        }
+                    });
+                    
+                    console.log('Daily sales totals:', dailySales);
+                    
+                    // Create array of last 7 days
+                    const today = new Date();
+                    const last7Days = [];
+                    for (let i = 6; i >= 0; i--) {
+                        const d = new Date(today);
+                        d.setDate(d.getDate() - i);
+                        const dateStr = d.toISOString().split('T')[0];
+                        last7Days.push({
+                            date: dateStr,
+                            amount: dailySales[dateStr] || 0,
+                            label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                        });
+                    }
+                    
+                    setSalesData(last7Days);
+                } else {
+                    setSalesData([]);
+                    setAllTransactions([]);
+                }
 
             } catch (err) {
                 console.error("Error loading char data", err);
@@ -737,6 +802,7 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     <button onClick={()=>setActiveTab('stats')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='stats'?'bg-indigo-600 text-white':'text-slate-400'}`}>Stats</button>
                     <button onClick={()=>setActiveTab('skills')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='skills'?'bg-indigo-600 text-white':'text-slate-400'}`}>Skills</button>
                     <button onClick={()=>setActiveTab('npcs')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='npcs'?'bg-indigo-600 text-white':'text-slate-400'}`}>NPCs</button>
+                    <button onClick={()=>setActiveTab('ledger')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='ledger'?'bg-indigo-600 text-white':'text-slate-400'}`}>Ledger</button>
                     <button onClick={()=>setActiveTab('inventory')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='inventory'?'bg-indigo-600 text-white':'text-slate-400'}`}>Inventory</button>
                 </div>
             </div>
@@ -759,6 +825,77 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                 ))}
                             </div>
                         </div>
+                        
+                        {/* Sales Chart */}
+                        <div className="bg-slate-800/50 p-4 rounded border border-slate-700 md:col-span-2">
+                            <div className="text-xs uppercase text-slate-500 mb-3 font-bold">Sales to Vendors (Last 7 Days)</div>
+                            {salesData.length > 0 && salesData.some(d => d.amount > 0) ? (
+                                <div className="relative h-40">
+                                    {(() => {
+                                        const maxAmount = Math.max(...salesData.map(d => d.amount), 1);
+                                        const councilMax = Math.ceil(maxAmount / 1000);
+                                        
+                                        return (
+                                            <>
+                                                {/* Y-axis labels */}
+                                                <div className="absolute left-0 top-0 h-32 flex flex-col justify-between text-[10px] text-slate-500 pr-2">
+                                                    <span>{councilMax}k</span>
+                                                    <span>{Math.floor(councilMax / 2)}k</span>
+                                                    <span>0</span>
+                                                </div>
+                                                
+                                                {/* Chart area */}
+                                                <div className="absolute left-12 right-0 top-0 h-32 flex items-end justify-between gap-2 px-2">
+                                                    {salesData.map((day, idx) => {
+                                                        const heightPercent = maxAmount > 0 ? (day.amount / maxAmount) * 100 : 0;
+                                                        const councils = (day.amount / 1000).toFixed(1);
+                                                        
+                                                        return (
+                                                            <div 
+                                                                key={day.date} 
+                                                                className="flex-1 flex flex-col items-center justify-end h-full group relative cursor-pointer"
+                                                                onClick={() => {
+                                                                    if (day.amount > 0) {
+                                                                        setLedgerDate(day.date);
+                                                                        setActiveTab('ledger');
+                                                                    }
+                                                                }}
+                                                            >
+                                                                {/* Tooltip */}
+                                                                {day.amount > 0 && (
+                                                                    <div className="absolute bottom-full mb-2 hidden group-hover:block bg-slate-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10 border border-slate-600">
+                                                                        <div className="font-bold">{councils}k councils</div>
+                                                                        <div className="text-slate-400 text-[10px]">{day.label}</div>
+                                                                    </div>
+                                                                )}
+                                                                
+                                                                {/* Bar */}
+                                                                <div 
+                                                                    className="w-full bg-gradient-to-t from-emerald-500 to-emerald-400 rounded-t transition-all hover:from-emerald-400 hover:to-emerald-300"
+                                                                    style={{ height: `${Math.max(heightPercent, day.amount > 0 ? 3 : 0)}%` }}
+                                                                ></div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                                
+                                                {/* X-axis labels below chart */}
+                                                <div className="absolute left-12 right-0 top-32 h-8 flex justify-between gap-2 px-2 pt-2">
+                                                    {salesData.map((day) => (
+                                                        <div key={`label-${day.date}`} className="flex-1 text-[9px] text-slate-500 text-center">
+                                                            {day.label.split(' ')[0]}<br />{day.label.split(' ')[1]}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </>
+                                        );
+                                    })()}
+                                </div>
+                            ) : (
+                                <div className="text-xs text-slate-500">No sales data available</div>
+                            )}
+                        </div>
+                        
                         <div className="bg-slate-800/50 p-4 rounded border border-slate-700 h-fit">
                             <div className="text-xs uppercase text-slate-500 mb-2 font-bold">Vitals</div>
                             <div className="space-y-1">
@@ -1223,6 +1360,121 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                         </tr>
                                     );
                                 })}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+            
+            {activeTab === 'ledger' && (
+                <div className="space-y-4 overflow-y-auto">
+                    <div className="flex items-center justify-between">
+                        <div className="text-sm text-slate-400">
+                            {ledgerDate ? (
+                                <>
+                                    Showing transactions for {new Date(ledgerDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                                    <button 
+                                        onClick={() => setLedgerDate(null)}
+                                        className="ml-3 text-xs text-indigo-400 hover:text-indigo-300 underline"
+                                    >
+                                        Show All
+                                    </button>
+                                </>
+                            ) : (
+                                'All Transactions'
+                            )}
+                        </div>
+                    </div>
+                    
+                    <div className="bg-slate-800/30 rounded border border-slate-700 overflow-hidden">
+                        <table className="w-full text-sm">
+                            <thead className="bg-slate-800/50 text-xs uppercase text-slate-500">
+                                <tr>
+                                    <th 
+                                        className="text-left p-3 cursor-pointer hover:text-slate-300 transition-colors"
+                                        onClick={() => setLedgerSort(prev => ({
+                                            key: 'timestamp',
+                                            direction: prev.key === 'timestamp' && prev.direction === 'desc' ? 'asc' : 'desc'
+                                        }))}
+                                    >
+                                        Date & Time {ledgerSort.key === 'timestamp' && (ledgerSort.direction === 'desc' ? '↓' : '↑')}
+                                    </th>
+                                    <th 
+                                        className="text-left p-3 cursor-pointer hover:text-slate-300 transition-colors"
+                                        onClick={() => setLedgerSort(prev => ({
+                                            key: 'vendor',
+                                            direction: prev.key === 'vendor' && prev.direction === 'asc' ? 'desc' : 'asc'
+                                        }))}
+                                    >
+                                        Vendor {ledgerSort.key === 'vendor' && (ledgerSort.direction === 'asc' ? '↑' : '↓')}
+                                    </th>
+                                    <th 
+                                        className="text-right p-3 cursor-pointer hover:text-slate-300 transition-colors"
+                                        onClick={() => setLedgerSort(prev => ({
+                                            key: 'amount',
+                                            direction: prev.key === 'amount' && prev.direction === 'desc' ? 'asc' : 'desc'
+                                        }))}
+                                    >
+                                        Amount {ledgerSort.key === 'amount' && (ledgerSort.direction === 'desc' ? '↓' : '↑')}
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-700/50">
+                                {(() => {
+                                    const filtered = ledgerDate 
+                                        ? allTransactions.filter(t => t.data.date === ledgerDate)
+                                        : allTransactions;
+                                    
+                                    const sorted = [...filtered].sort((a, b) => {
+                                        let compareResult = 0;
+                                        
+                                        if (ledgerSort.key === 'timestamp') {
+                                            // Create sortable datetime from date and time strings
+                                            const dateTimeA = `${a.data.date} ${a.data.time || '00:00:00'}`;
+                                            const dateTimeB = `${b.data.date} ${b.data.time || '00:00:00'}`;
+                                            compareResult = dateTimeA.localeCompare(dateTimeB);
+                                        } else if (ledgerSort.key === 'vendor') {
+                                            const vendorA = (a.data.npc || '').replace('NPC_', '');
+                                            const vendorB = (b.data.npc || '').replace('NPC_', '');
+                                            compareResult = vendorA.localeCompare(vendorB);
+                                        } else if (ledgerSort.key === 'amount') {
+                                            compareResult = a.data.amount - b.data.amount;
+                                        }
+                                        
+                                        return ledgerSort.direction === 'desc' ? -compareResult : compareResult;
+                                    });
+                                    
+                                    if (sorted.length === 0) {
+                                        return (
+                                            <tr>
+                                                <td colSpan="3" className="p-6 text-center text-slate-500 text-xs">
+                                                    No transactions found
+                                                </td>
+                                            </tr>
+                                        );
+                                    }
+                                    
+                                    return sorted.map((tx, idx) => {
+                                        const dateObj = new Date(tx.data.date);
+                                        const dateStr = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                                        const timeStr = tx.data.time || '';
+                                        const dateTime = `${dateStr} ${timeStr}`;
+                                        
+                                        return (
+                                            <tr key={tx.id} className="hover:bg-slate-700/30 transition-colors">
+                                                <td className="p-3 text-slate-300">
+                                                    {dateTime}
+                                                </td>
+                                                <td className="p-3 text-white">
+                                                    {tx.data.npc?.replace('NPC_', '') || 'Unknown'}
+                                                </td>
+                                                <td className="p-3 text-right">
+                                                    <span className="text-emerald-400 font-semibold">{tx.data.amount.toLocaleString()}</span>
+                                                </td>
+                                            </tr>
+                                        );
+                                    });
+                                })()}
                             </tbody>
                         </table>
                     </div>
