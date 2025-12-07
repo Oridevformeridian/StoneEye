@@ -21,6 +21,17 @@
   100% { transform: scale(1); }
 }
 
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
 @layer utilities {
   .animate-pop { animation: pop 0.2s ease-out; }
 }

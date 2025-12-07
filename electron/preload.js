@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('electron', {
   setLogDirectory: (directory) => ipcRenderer.invoke('set-log-directory', directory),
   setWatchEnabled: (enabled) => ipcRenderer.invoke('set-watch-enabled', enabled),
   setAutoImportEnabled: (enabled) => ipcRenderer.invoke('set-auto-import-enabled', enabled),
+  setLiveMonitoringEnabled: (enabled) => ipcRenderer.invoke('set-live-monitoring-enabled', enabled),
   
   // Archived logs
   getArchivedLogs: () => ipcRenderer.invoke('get-archived-logs'),
@@ -32,5 +33,10 @@ contextBridge.exposeInMainWorld('electron', {
     const subscription = (event, data) => callback(data);
     ipcRenderer.on('auto-import-exports', subscription);
     return () => ipcRenderer.removeListener('auto-import-exports', subscription);
+  },
+  onLiveLogUpdate: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('live-log-update', subscription);
+    return () => ipcRenderer.removeListener('live-log-update', subscription);
   }
 });

@@ -3,7 +3,7 @@ import { db } from '../db/index.js';
 import { KNOWN_FILES } from '../constants/index.js';
 import Icon from '../components/Icon.jsx';
 import LoadingBar from '../components/LoadingBar.jsx';
-import { parseLogFileObject } from '../utils/logParser.js';
+import { parseLogFileObject, parseLogContent } from '../utils/logParser.js';
 import ElectronSettings from '../components/ElectronSettings.jsx';
 
 export default function IngestView({ onIngestComplete, autoStart }) {
@@ -18,7 +18,15 @@ export default function IngestView({ onIngestComplete, autoStart }) {
     const [confirmPurgeAll, setConfirmPurgeAll] = useState(false);
     const [hasCharacterData, setHasCharacterData] = useState(false);
 
-    const addLog = (msg) => setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev]);
+    const addLog = (msg) => {
+        setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev]);
+        // Also persist to localStorage for background visibility
+        const persistedLogs = JSON.parse(localStorage.getItem('ingest_logs') || '[]');
+        persistedLogs.unshift(`[${new Date().toLocaleTimeString()}] ${msg}`);
+        // Keep only last 100 logs
+        if (persistedLogs.length > 100) persistedLogs.length = 100;
+        localStorage.setItem('ingest_logs', JSON.stringify(persistedLogs));
+    };
 
     const checkCharacterData = () => {
         for (let i = 0; i < localStorage.length; i++) {
@@ -33,6 +41,12 @@ export default function IngestView({ onIngestComplete, autoStart }) {
 
     useEffect(() => {
         checkCharacterData();
+        
+        // Load persisted logs on mount
+        const persistedLogs = JSON.parse(localStorage.getItem('ingest_logs') || '[]');
+        if (persistedLogs.length > 0) {
+            setLogs(persistedLogs);
+        }
     }, []);
 
     const processJson = async (filename, jsonData) => {
@@ -464,7 +478,91 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                 {window.electron && (
                     <div>
                         <h3 className="text-lg font-medium text-white mb-3">Desktop Auto-Watch</h3>
-                        <ElectronSettings onImportLog={async (file) => {
+                        <ElectronSettings 
+                            onLiveLogUpdate={async (content) => {
+                                // Parse the new log content incrementally
+                                const parseResult = parseLogContent(content);
+                                const parsed = parseResult.vendors || [];
+                                const transactions = parseResult.transactions || [];
+                                
+                                if (parsed.length === 0 && transactions.length === 0) {
+                                    return; // Nothing to update
+                                }
+                                
+                                addLog(`Live update: ${parsed.length} vendors, ${transactions.length} transactions`);
+                                
+                                // Show toast notification for background updates
+                                const notificationParts = [];
+                                if (parsed.length > 0) notificationParts.push(`${parsed.length} vendor${parsed.length > 1 ? 's' : ''}`);
+                                if (transactions.length > 0) notificationParts.push(`${transactions.length} transaction${transactions.length > 1 ? 's' : ''}`);
+                                
+                                if (window.showToast) {
+                                    window.showToast(`Live update: ${notificationParts.join(', ')}`, 'success');
+                                }
+                                
+                                // Update vendors in database (only newer entries)
+                                if (parsed.length > 0) {
+                                    const entriesToUpdate = [];
+                                    
+                                    for (const p of parsed) {
+                                        const character = p.character;
+                                        const entryId = character ? `${character}_${p.id}_${p.npc}` : `${p.id}_${p.npc}`;
+                                        const name = p.npc || (`vendor_${p.id}`);
+                                        const refs = [];
+                                        if (character) refs.push(`character:${character}`);
+                                        if (p.npc) refs.push(`npc:${p.npc}`, `vendor:${p.npc}`);
+                                        
+                                        const newTimestamp = p.timestampMs || 0;
+                                        
+                                        // Check if we already have this vendor
+                                        const existing = await db.objects.get({ type: 'vendors', id: entryId });
+                                        
+                                        if (!existing || !existing.lastUpdated || newTimestamp >= existing.lastUpdated) {
+                                            entriesToUpdate.push({
+                                                type: 'vendors',
+                                                id: entryId,
+                                                name,
+                                                data: { ...p, character },
+                                                refs,
+                                                category: 'vendor',
+                                                lastUpdated: newTimestamp
+                                            });
+                                        }
+                                    }
+                                    
+                                    if (entriesToUpdate.length > 0) {
+                                        await db.objects.bulkPut(entriesToUpdate);
+                                        addLog(`Updated ${entriesToUpdate.length} vendors from live log`);
+                                    }
+                                }
+                                
+                                // Store transactions
+                                if (transactions.length > 0) {
+                                    const transactionEntries = transactions.map((t, idx) => {
+                                        const refs = [`character:${t.character}`, `npc:${t.npc}`];
+                                        return {
+                                            type: 'transactions',
+                                            id: `${t.character}_${t.timestamp}_${t.npcId}_${idx}_${Date.now()}`, // Add timestamp to ensure uniqueness
+                                            name: `Sale to ${t.npc}`,
+                                            data: t,
+                                            refs,
+                                            category: 'transaction'
+                                        };
+                                    });
+                                    await db.objects.bulkPut(transactionEntries);
+                                    addLog(`Recorded ${transactionEntries.length} new transactions`);
+                                    
+                                    // Show toast for transactions specifically
+                                    if (window.showToast) {
+                                        const totalGold = transactions.reduce((sum, t) => sum + (t.amount || 0), 0);
+                                        window.showToast(`💰 ${transactionEntries.length} sale${transactionEntries.length > 1 ? 's' : ''} recorded (${totalGold.toLocaleString()}g)`, 'success');
+                                    }
+                                }
+                                
+                                // Trigger UI refresh by dispatching custom event
+                                window.dispatchEvent(new CustomEvent('vendorDataUpdated'));
+                            }}
+                            onImportLog={async (file) => {
                             setLoading(true);
                             setStatus('Processing archived log');
                             setCurrentFile(file.name);

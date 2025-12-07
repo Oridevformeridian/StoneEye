@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { db } from './db/index.js';
 import { KNOWN_FILES, CATEGORY_META, FAVOR_LEVELS, getCategoryMeta } from './constants/index.js';
 import Icon from './components/Icon.jsx';
+import stoneeyeIcon from './stoneeye-icon.png';
 import Badge from './components/Badge.jsx';
 import GameIcon from './components/GameIcon.jsx';
 import WikiButton from './components/WikiButton.jsx';
@@ -353,10 +354,28 @@ export default function App() {
     const [historyIndex, setHistoryIndex] = useState(0);
     const [totalRecords, setTotalRecords] = useState(0);
     const [autoIngest, setAutoIngest] = useState(false);
+    const [toasts, setToasts] = useState([]);
 
     const activeState = historyStack[historyIndex];
     const activeTab = activeState.tab;
     const explorerParams = activeState.params;
+    
+    // Expose showToast globally for background processes
+    useEffect(() => {
+        window.showToast = (message, type = 'info') => {
+            const id = Date.now();
+            setToasts(prev => [...prev, { id, message, type }]);
+            
+            // Auto-remove after 4 seconds
+            setTimeout(() => {
+                setToasts(prev => prev.filter(t => t.id !== id));
+            }, 4000);
+        };
+        
+        return () => {
+            delete window.showToast;
+        };
+    }, []);
 
     useEffect(() => {
         const check = async () => {
@@ -435,7 +454,7 @@ export default function App() {
             <div id="desktop-sidebar" className="hidden md:flex w-64 bg-slate-900 border-r border-slate-800 flex-col shrink-0">
                 <div className="p-6 border-b border-slate-800">
                     <h1 className="text-xl font-bold text-indigo-400 flex items-center gap-2">
-                        <Icon name="database" className="w-6 h-6" /> The Stone Eye
+                        <img src={stoneeyeIcon} alt="StoneEye" className="w-5 h-5" /> The Stone Eye
                     </h1>
                     <p className="text-xs text-slate-500 mt-2">Fantasy Matchmaker Service</p>
                 </div>
@@ -532,6 +551,29 @@ export default function App() {
                             <MobileNavBtn active={activeTab === 'ingest'} onClick={() => navigate('ingest')} icon="download" label="Import" />
                 </div>
             </nav>
+            
+            {/* Toast Notifications */}
+            <div className="fixed bottom-20 md:bottom-4 right-4 z-[60] space-y-2 pointer-events-none">
+                {toasts.map(toast => (
+                    <div
+                        key={toast.id}
+                        className={`pointer-events-auto px-4 py-3 rounded-lg shadow-xl border backdrop-blur-sm animate-[slideIn_0.3s_ease-out] ${
+                            toast.type === 'success' 
+                                ? 'bg-green-900/90 border-green-700 text-green-100' 
+                                : toast.type === 'error'
+                                ? 'bg-red-900/90 border-red-700 text-red-100'
+                                : 'bg-blue-900/90 border-blue-700 text-blue-100'
+                        }`}
+                    >
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                            {toast.type === 'success' && <Icon name="check-circle" className="w-4 h-4" />}
+                            {toast.type === 'error' && <Icon name="alert-circle" className="w-4 h-4" />}
+                            {toast.type === 'info' && <Icon name="info" className="w-4 h-4" />}
+                            <span>{toast.message}</span>
+                        </div>
+                    </div>
+                ))}
+            </div>
         </div>
     );
 }

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 
-const ElectronSettings = ({ onImportLog }) => {
+const ElectronSettings = ({ onImportLog, onLiveLogUpdate }) => {
     const [settings, setSettings] = useState(null);
     const [archivedLogs, setArchivedLogs] = useState([]);
     const [reportExports, setReportExports] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [liveMonitoringEnabled, setLiveMonitoringEnabled] = useState(false);
 
     useEffect(() => {
         loadSettings();
@@ -36,10 +37,18 @@ const ElectronSettings = ({ onImportLog }) => {
                 loadReportExports();
             });
             
+            const unsubscribeLiveLog = window.electron.onLiveLogUpdate?.(async (data) => {
+                console.log('Live log update received:', data.content.length, 'bytes');
+                if (onLiveLogUpdate) {
+                    onLiveLogUpdate(data.content);
+                }
+            });
+            
             return () => {
                 unsubscribe();
                 unsubscribeAutoLog?.();
                 unsubscribeAutoExports?.();
+                unsubscribeLiveLog?.();
             };
         }
     }, []);
@@ -48,6 +57,7 @@ const ElectronSettings = ({ onImportLog }) => {
         if (window.electron?.getSettings) {
             const settings = await window.electron.getSettings();
             setSettings(settings);
+            setLiveMonitoringEnabled(settings.liveMonitoringEnabled || false);
             setLoading(false);
         }
     };
@@ -93,6 +103,25 @@ const ElectronSettings = ({ onImportLog }) => {
         await window.electron.setAutoImportEnabled(newEnabled);
         // Update local state immediately
         setSettings({ ...settings, autoImportEnabled: newEnabled });
+    };
+
+    const handleToggleLiveMonitoring = async () => {
+        const newEnabled = !liveMonitoringEnabled;
+        const result = await window.electron.setLiveMonitoringEnabled(newEnabled);
+        if (result.error) {
+            alert(result.error);
+        } else {
+            setLiveMonitoringEnabled(newEnabled);
+            
+            // Show toast notification
+            if (window.showToast) {
+                if (newEnabled) {
+                    window.showToast('🔴 Live monitoring enabled - tracking player.log every minute', 'success');
+                } else {
+                    window.showToast('Live monitoring disabled', 'info');
+                }
+            }
+        }
     };
 
     const handleImportLog = async (logPath) => {
@@ -172,6 +201,29 @@ const ElectronSettings = ({ onImportLog }) => {
                                 </div>
                                 <div className="text-xs text-slate-500">
                                     Automatically import new logs and character/storage exports
+                                </div>
+                            </div>
+                        </label>
+                    </div>
+
+                    {/* Live Monitoring Toggle */}
+                    <div>
+                        <label className="flex items-center gap-3 cursor-pointer">
+                            <input 
+                                type="checkbox"
+                                checked={liveMonitoringEnabled}
+                                onChange={handleToggleLiveMonitoring}
+                                className="w-4 h-4"
+                            />
+                            <div>
+                                <div className="text-sm text-slate-300 font-semibold flex items-center gap-2">
+                                    Live Log Monitoring
+                                    {liveMonitoringEnabled && (
+                                        <span className="text-xs bg-green-900/50 text-green-300 px-2 py-0.5 rounded">ACTIVE</span>
+                                    )}
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                    Read player.log every minute while playing (background updates)
                                 </div>
                             </div>
                         </label>

@@ -36,3 +36,6 @@ certs/
 # Electron
 out
 electron-builder.yml
+
+# Deployment scripts
+.deploy/

@@ -14,6 +14,7 @@ const store = new Store({
     logDirectory: '',
     watchEnabled: false,
     autoImportEnabled: false,
+    liveMonitoringEnabled: false,
     archiveDirectory: path.join(app.getPath('userData'), 'archived-logs'),
     lastImportedLog: '',
     lastImportedExports: {}
@@ -23,6 +24,9 @@ const store = new Store({
 let mainWindow;
 let logWatcher = null;
 let importCheckInterval = null;
+let liveLogMonitor = null;
+let lastLogPosition = 0;
+let liveMonitoringEnabled = false;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -66,6 +70,12 @@ app.whenReady().then(() => {
     setImmediate(() => checkForNewImports());
     importCheckInterval = setInterval(() => checkForNewImports(), 10000);
   }
+  
+  // Resume live monitoring if it was enabled
+  if (store.get('liveMonitoringEnabled') && logDirectory) {
+    liveMonitoringEnabled = true;
+    startLiveLogMonitoring(logDirectory);
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -80,6 +90,7 @@ ipcMain.handle('get-settings', () => {
     logDirectory: store.get('logDirectory'),
     watchEnabled: store.get('watchEnabled'),
     autoImportEnabled: store.get('autoImportEnabled'),
+    liveMonitoringEnabled: store.get('liveMonitoringEnabled'),
     archiveDirectory: store.get('archiveDirectory')
   };
 });
@@ -143,6 +154,24 @@ ipcMain.handle('set-auto-import-enabled', async (event, enabled) => {
       clearInterval(importCheckInterval);
       importCheckInterval = null;
     }
+  }
+  
+  return { success: true };
+});
+
+ipcMain.handle('set-live-monitoring-enabled', async (event, enabled) => {
+  liveMonitoringEnabled = enabled;
+  store.set('liveMonitoringEnabled', enabled);
+  
+  if (enabled) {
+    const logDirectory = store.get('logDirectory');
+    if (logDirectory) {
+      startLiveLogMonitoring(logDirectory);
+    } else {
+      return { error: 'No log directory set' };
+    }
+  } else {
+    stopLiveLogMonitoring();
   }
   
   return { success: true };
@@ -399,5 +428,85 @@ async function checkForNewImports() {
     }
   } catch (err) {
     // Reports directory doesn't exist or error reading
+  }
+}
+
+// Live Log Monitoring Functions
+
+function startLiveLogMonitoring(logDirectory) {
+  if (liveLogMonitor) {
+    stopLiveLogMonitoring();
+  }
+
+  const playerLogPath = path.join(logDirectory, 'player.log');
+  console.log(`Starting live log monitoring: ${playerLogPath}`);
+  
+  // Reset position to read from current end of file
+  fs.stat(playerLogPath)
+    .then(stats => {
+      lastLogPosition = stats.size;
+      console.log(`Starting from position: ${lastLogPosition}`);
+    })
+    .catch(err => {
+      console.log('player.log not found yet, will start from beginning');
+      lastLogPosition = 0;
+    });
+  
+  // Read new content immediately, then every 60 seconds
+  setImmediate(() => readNewLogContent(playerLogPath));
+  liveLogMonitor = setInterval(() => readNewLogContent(playerLogPath), 60000);
+}
+
+function stopLiveLogMonitoring() {
+  if (liveLogMonitor) {
+    clearInterval(liveLogMonitor);
+    liveLogMonitor = null;
+    lastLogPosition = 0;
+    console.log('Live log monitoring stopped');
+  }
+}
+
+async function readNewLogContent(playerLogPath) {
+  if (!liveMonitoringEnabled) return;
+  
+  try {
+    const stats = await fs.stat(playerLogPath);
+    const currentSize = stats.size;
+    
+    // If file is smaller than last position, it was rotated - start from beginning
+    if (currentSize < lastLogPosition) {
+      console.log('Log file rotated, reading from beginning');
+      lastLogPosition = 0;
+    }
+    
+    // No new content
+    if (currentSize === lastLogPosition) {
+      return;
+    }
+    
+    // Read only the new content
+    const fileHandle = await fs.open(playerLogPath, 'r');
+    const bytesToRead = currentSize - lastLogPosition;
+    const buffer = Buffer.allocUnsafe(bytesToRead);
+    
+    await fileHandle.read(buffer, 0, bytesToRead, lastLogPosition);
+    await fileHandle.close();
+    
+    const newContent = buffer.toString('utf-8');
+    lastLogPosition = currentSize;
+    
+    console.log(`Read ${bytesToRead} new bytes from player.log`);
+    
+    // Send to renderer for parsing
+    if (mainWindow && newContent.trim().length > 0) {
+      mainWindow.webContents.send('live-log-update', { content: newContent, bytesRead: bytesToRead });
+    }
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      // File doesn't exist yet
+      console.log('player.log not found');
+    } else {
+      console.error('Error reading live log:', err);
+    }
   }
 }

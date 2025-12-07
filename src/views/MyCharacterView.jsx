@@ -33,6 +33,7 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
     const [allTransactions, setAllTransactions] = useState([]);
     const [ledgerDate, setLedgerDate] = useState(null);
     const [ledgerSort, setLedgerSort] = useState({ key: 'timestamp', direction: 'desc' });
+    const [npcFilter, setNpcFilter] = useState('');
 
     const handleCharLogUpload = async (e) => {
         const files = Array.from(e.target.files || []);
@@ -70,14 +71,18 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     
                     // Store transactions
                     if (transactions && transactions.length > 0) {
-                        const transactionEntries = transactions.map((t, idx) => ({
-                            type: 'transactions',
-                            id: `${t.character}_${t.timestamp}_${t.npcId}_${idx}`, // Add index to make unique
-                            name: `Sale to ${t.npc}`,
-                            data: t,
-                            refs: [`character:${t.character}`, `npc:${t.npc}`],
-                            category: 'transaction'
-                        }));
+                        const transactionEntries = transactions.map((t, idx) => {
+                            const refs = [`character:${t.character}`, `npc:${t.npc}`];
+                            console.log(`Storing transaction: character=${t.character}, npc=${t.npc}, refs=`, refs);
+                            return {
+                                type: 'transactions',
+                                id: `${t.character}_${t.timestamp}_${t.npcId}_${idx}`, // Add index to make unique
+                                name: `Sale to ${t.npc}`,
+                                data: t,
+                                refs,
+                                category: 'transaction'
+                            };
+                        });
                         await db.objects.bulkPut(transactionEntries);
                         totalTransactions += transactionEntries.length;
                     }
@@ -587,6 +592,8 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                 if (selectedCharId) {
                     const allTransactions = await db.objects.where('type').equals('transactions').toArray();
                     console.log(`Found ${allTransactions.length} total transactions in database`);
+                    console.log(`Looking for transactions with character:${selectedCharId}`);
+                    console.log(`First few transaction refs:`, allTransactions.slice(0, 5).map(t => ({ refs: t.refs, data: t.data })));
                     
                     const charTransactions = allTransactions.filter(t => t.refs && t.refs.includes(`character:${selectedCharId}`));
                     console.log(`Found ${charTransactions.length} transactions for character ${selectedCharId}`);
@@ -1093,6 +1100,13 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     <div className="flex justify-between items-center mb-4 shrink-0">
                         <h3 className="text-lg font-light text-white">Character NPCs & Vendors</h3>
                         <div className="flex gap-2 items-center">
+                            <input 
+                                type="text"
+                                placeholder="Filter NPCs..."
+                                value={npcFilter}
+                                onChange={(e) => setNpcFilter(e.target.value)}
+                                className="px-3 py-1 bg-slate-800 border border-slate-700 text-slate-300 rounded text-xs placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
+                            />
                             <select 
                                 value={npcSort} 
                                 onChange={(e) => setNpcSort(e.target.value)}
@@ -1151,6 +1165,8 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                     if (hideSoulMates && v.currentFavor >= 3000) return false;
                                     // Hide "Interaction" entries with 0 favor (likely items, not NPCs)
                                     if (v.data.favorLabel === 'Interaction' && (v.currentFavor || 0) === 0) return false;
+                                    // Filter by name
+                                    if (npcFilter && !v.name.toLowerCase().includes(npcFilter.toLowerCase())) return false;
                                     return true;
                                 })
                                 .map(vendor => {

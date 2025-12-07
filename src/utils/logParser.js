@@ -10,25 +10,75 @@ export function parseLogContent(content) {
   const loginRe = /Logged in as character\s+(\S+)\.\s+Time UTC=(\d{2})\/(\d{2})\/(\d{4})\s+/;
   const timeRe = /^\[(\d{2}:\d{2}:\d{2})\]\s*/;
   const dateRe = /^\[(\d{4}-\d{2}-\d{2})\s+/;
+  const fullDateTimeRe = /^\[(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\]/;
 
   let currentCharacter = null;
   let lastVendorId = null; // Track the most recent vendor screen opened
   let lastVendorBalance = null; // Track balance to calculate sale amount
   let currentDate = null; // Track the date from log file
+  let lastTime = null; // Track last timestamp to detect date rollovers
+  
+  // Track all active vendor sessions to handle busy areas with multiple conversations
+  const vendorSessions = new Map(); // key: vendorId, value: { balance, resetTimer, maxBalance, character, npc }
   
   // If no date found in logs, use today's date as fallback
   const fallbackDate = new Date().toISOString().split('T')[0];
+  
+  // Try to infer character from localStorage if not found in log
+  const inferCharacterFromLocalStorage = () => {
+    if (typeof localStorage === 'undefined') return null;
+    // Look for the most recently modified character data
+    const charKeys = Object.keys(localStorage).filter(k => k.startsWith('gorgon_character_'));
+    if (charKeys.length > 0) {
+      // Just use the first one found - in practice there's usually only one active character per session
+      const charName = charKeys[0].replace('gorgon_character_', '');
+      console.log(`Inferred character name from localStorage: ${charName}`);
+      return charName;
+    }
+    return null;
+  };
+
+  // If no character found in log, try to infer from localStorage at the start
+  if (!currentCharacter) {
+    currentCharacter = inferCharacterFromLocalStorage();
+    if (currentCharacter) {
+      console.log(`No 'Logged in as character' line found - using inferred character: ${currentCharacter}`);
+    }
+  }
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line) continue;
     
-    // Check for date in log line (format like [2024-12-04 02:40:57])
-    const dateMatch = line.match(dateRe);
-    if (dateMatch) currentDate = dateMatch[1];
+    // Check for full date-time format first [2025-12-05 14:30:22]
+    let dateTimeMatch = line.match(fullDateTimeRe);
+    if (dateTimeMatch) {
+      currentDate = dateTimeMatch[1];
+      console.log(`Date updated to: ${currentDate}`);
+    } else {
+      // Fallback to date-only check
+      const dateMatch = line.match(dateRe);
+      if (dateMatch) currentDate = dateMatch[1];
+    }
     
     const timeMatch = line.match(timeRe);
     const time = timeMatch ? timeMatch[1] : null;
+    
+    // Detect date rollover: if we see a time like 00:xx:xx or 01:xx:xx after 22:xx:xx or 23:xx:xx
+    if (time && lastTime && currentDate) {
+      const currentHour = parseInt(time.split(':')[0]);
+      const lastHour = parseInt(lastTime.split(':')[0]);
+      
+      // If we go from late evening (22-23) to early morning (00-05), advance the date
+      if (lastHour >= 22 && currentHour <= 5) {
+        const dateObj = new Date(currentDate + 'T00:00:00Z');
+        dateObj.setUTCDate(dateObj.getUTCDate() + 1);
+        currentDate = dateObj.toISOString().split('T')[0];
+        console.log(`Date rollover detected at ${time}, advanced to: ${currentDate}`);
+      }
+    }
+    
+    if (time) lastTime = time;
 
     // Check for character login
     let m = line.match(loginRe);
@@ -73,6 +123,18 @@ export function parseLogContent(content) {
       const favor = interaction ? interaction.favor : 0;
       const character = interaction ? interaction.character : currentCharacter;
 
+      // Store this vendor session for transaction tracking
+      vendorSessions.set(Number(id), {
+        balance,
+        resetTimer,
+        maxBalance,
+        character,
+        npc: npcName,
+        favorLabel,
+        favor,
+        time
+      });
+
       // Build full timestamp for temporal ordering
       const logDate = currentDate || fallbackDate;
       const timestamp = time ? `${logDate}T${time}Z` : `${logDate}T00:00:00Z`;
@@ -102,30 +164,55 @@ export function parseLogContent(content) {
       const resetTimer = Number(m[2]);
       const maxBalance = Number(m[3]);
 
-      console.log(`ProcessVendorUpdateAvailableGold: balance=${balance}, lastVendorBalance=${lastVendorBalance}, lastVendorId=${lastVendorId}`);
+      console.log(`ProcessVendorUpdateAvailableGold: balance=${balance}, resetTimer=${resetTimer}, maxBalance=${maxBalance}`);
 
-      // This updates the most recent vendor screen
-      if (lastVendorId && currentCharacter) {
-        const existingEntry = results.find(r => r.id === lastVendorId && r.character === currentCharacter);
-        if (existingEntry) {
+      // Try to match this update to an active vendor session
+      // Strategy: prefer lastVendorId if it matches maxBalance, otherwise search all sessions
+      let matchedVendorId = null;
+      let matchedSession = null;
+      
+      // First try: use lastVendorId if it has matching maxBalance and balance changed
+      if (lastVendorId && vendorSessions.has(lastVendorId)) {
+        const session = vendorSessions.get(lastVendorId);
+        if (session.maxBalance === maxBalance && session.character === currentCharacter && session.balance !== balance) {
+          matchedVendorId = lastVendorId;
+          matchedSession = session;
+          console.log(`Matched to lastVendorId ${lastVendorId} (${session.npc})`);
+        }
+      }
+      
+      // Second try: search all sessions for matching maxBalance with balance change
+      if (!matchedVendorId) {
+        for (const [vendorId, session] of vendorSessions.entries()) {
+          if (session.maxBalance === maxBalance && session.character === currentCharacter && session.balance !== balance) {
+            matchedVendorId = vendorId;
+            matchedSession = session;
+            console.log(`Matched to vendor ${vendorId} (${session.npc}) by maxBalance search`);
+            break;
+          }
+        }
+      }
+
+      if (matchedVendorId && matchedSession) {
+        if (!currentCharacter) {
+          console.warn(`Cannot record transaction - no character identified. Try importing a more complete log file.`);
+        } else {
+          const existingEntry = results.find(r => r.id === matchedVendorId && r.character === currentCharacter);
+          if (existingEntry) {
           // Calculate sale amount (difference between balances)
-          const saleAmount = lastVendorBalance !== null ? (lastVendorBalance - balance) : 0;
+          const saleAmount = matchedSession.balance - balance;
           
-          console.log(`Calculated sale amount: ${saleAmount} (${lastVendorBalance} - ${balance})`);
+          console.log(`Matched vendor ${matchedVendorId} (${matchedSession.npc}): sale amount=${saleAmount} (${matchedSession.balance} - ${balance})`);
           
           if (saleAmount > 0) {
             const transactionDate = currentDate || fallbackDate;
-            // Record the transaction
-            const interactionKey = `${currentCharacter}_${lastVendorId}`;
-            const interaction = interactions.get(interactionKey);
-            const npcName = interaction ? interaction.npcName : existingEntry.npc;
             
-            console.log(`Recording transaction: ${saleAmount} gold to ${npcName} on ${transactionDate} at ${time}`);
+            console.log(`Recording transaction: ${saleAmount} gold to ${matchedSession.npc} on ${transactionDate} at ${time}`);
             
             transactions.push({
               character: currentCharacter,
-              npc: npcName,
-              npcId: lastVendorId,
+              npc: matchedSession.npc,
+              npcId: matchedVendorId,
               amount: saleAmount,
               date: transactionDate,
               time: time,
@@ -138,8 +225,15 @@ export function parseLogContent(content) {
           existingEntry.resetTimer = resetTimer;
           existingEntry.maxBalance = maxBalance;
           existingEntry.time = time; // Update timestamp to latest transaction
-          lastVendorBalance = balance; // Update tracked balance
+          
+          // Update the session
+          matchedSession.balance = balance;
+          matchedSession.resetTimer = resetTimer;
+          matchedSession.time = time;
+          }
         }
+      } else {
+        console.log(`Could not match vendor update to any session. lastVendorId=${lastVendorId}, Active sessions: ${Array.from(vendorSessions.keys()).join(', ')}`);
       }
     }
   }
