@@ -4,6 +4,11 @@ import { fileURLToPath } from 'url';
 import Store from 'electron-store';
 import chokidar from 'chokidar';
 import fs from 'fs/promises';
+import zlib from 'zlib';
+import { promisify } from 'util';
+
+const gzip = promisify(zlib.gzip);
+const gunzip = promisify(zlib.gunzip);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -188,7 +193,7 @@ ipcMain.handle('get-archived-logs', async () => {
   try {
     await fs.mkdir(archiveDir, { recursive: true });
     const files = await fs.readdir(archiveDir);
-    const logFiles = files.filter(f => f.endsWith('.log'));
+    const logFiles = files.filter(f => f.endsWith('.log') || f.endsWith('.log.gz'));
     
     const filesWithStats = await Promise.all(
       logFiles.map(async (file) => {
@@ -212,8 +217,16 @@ ipcMain.handle('get-archived-logs', async () => {
 
 ipcMain.handle('read-log-file', async (event, filePath) => {
   try {
-    const content = await fs.readFile(filePath, 'utf-8');
-    return content;
+    const isGzipped = filePath.endsWith('.gz');
+    
+    if (isGzipped) {
+      const compressed = await fs.readFile(filePath);
+      const decompressed = await gunzip(compressed);
+      return decompressed.toString('utf-8');
+    } else {
+      const content = await fs.readFile(filePath, 'utf-8');
+      return content;
+    }
   } catch (err) {
     console.error('Error reading log file:', err);
     return null;
@@ -351,11 +364,16 @@ async function archiveLog(filePath) {
     await fs.mkdir(archiveDir, { recursive: true });
     
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('.')[0];
-    const archiveName = `player_${timestamp}.log`;
+    const archiveName = `player_${timestamp}.log.gz`;
     const archivePath = path.join(archiveDir, archiveName);
     
-    await fs.copyFile(filePath, archivePath);
-    console.log(`Archived log: ${archiveName}`);
+    // Read, compress, and save
+    const content = await fs.readFile(filePath, 'utf-8');
+    const compressed = await gzip(content);
+    await fs.writeFile(archivePath, compressed);
+    
+    const stats = await fs.stat(archivePath);
+    console.log(`Archived log: ${archiveName} (compressed to ${(stats.size / 1024).toFixed(1)} KB)`);
     
     // Notify renderer
     if (mainWindow) {
