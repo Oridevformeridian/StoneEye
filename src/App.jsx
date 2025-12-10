@@ -377,6 +377,18 @@ export default function App() {
         };
     }, []);
 
+    // Listen for live monitoring started event from main process
+    useEffect(() => {
+        if (window.electron?.onLiveMonitoringStarted) {
+            const unsubscribe = window.electron.onLiveMonitoringStarted((data) => {
+                if (window.showToast) {
+                    window.showToast(`🔴 Live monitoring started automatically`, 'success');
+                }
+            });
+            return () => unsubscribe();
+        }
+    }, []);
+
     useEffect(() => {
         const check = async () => {
              const count = await db.objects.count();
@@ -489,42 +501,42 @@ export default function App() {
                 )}
                 {activeTab === 'bookmarks' && (
                     <div className="h-full overflow-y-auto">
-                        <BookmarksView onNavigate={handleExplorerNavigate} />
+                        <BookmarksView onNavigate={handleExplorerNavigate} goBack={historyIndex > 0 ? goBack : null} />
                     </div>
                 )}
                 {activeTab === 'active-skills' && (
                     <div className="h-full overflow-y-auto">
-                        <ActiveSkillsView onNavigate={handleExplorerNavigate} />
+                        <ActiveSkillsView onNavigate={handleExplorerNavigate} goBack={historyIndex > 0 ? goBack : null} />
                     </div>
                 )}
                 {activeTab === 'trade-skills' && (
                     <div className="h-full overflow-y-auto">
-                        <TradeSkillsView onNavigate={handleExplorerNavigate} />
+                        <TradeSkillsView onNavigate={handleExplorerNavigate} goBack={historyIndex > 0 ? goBack : null} />
                     </div>
                 )}
                 {activeTab === 'lore' && (
                     <div className="h-full overflow-y-auto">
-                        <LoreView onNavigate={handleExplorerNavigate} />
+                        <LoreView onNavigate={handleExplorerNavigate} goBack={historyIndex > 0 ? goBack : null} />
                     </div>
                 )}
                  {activeTab === 'treasure' && (
                     <div className="h-full overflow-y-auto">
-                        <TreasureListView onNavigate={handleExplorerNavigate} />
+                        <TreasureListView onNavigate={handleExplorerNavigate} goBack={historyIndex > 0 ? goBack : null} />
                     </div>
                 )}
                 {activeTab === 'npc-services' && (
                     <div className="h-full overflow-y-auto">
-                        <NpcServicesView onNavigate={handleExplorerNavigate} />
+                        <NpcServicesView onNavigate={handleExplorerNavigate} goBack={historyIndex > 0 ? goBack : null} />
                     </div>
                 )}
                 {activeTab === 'my-character' && (
                     <div className="h-full overflow-y-auto">
-                        <MyCharacterView onNavigate={handleExplorerNavigate} goToIngest={() => navigate('ingest')} />
+                        <MyCharacterView onNavigate={handleExplorerNavigate} goToIngest={() => navigate('ingest')} goBack={historyIndex > 0 ? goBack : null} />
                     </div>
                 )}
                 {activeTab === 'events' && (
                     <div className="h-full overflow-y-auto">
-                        <EventsView />
+                        <EventsView goBack={historyIndex > 0 ? goBack : null} />
                     </div>
                 )}
                 {activeTab === 'explore' && (

@@ -1,8 +1,9 @@
-export function parseLogContent(content) {
+export function parseLogContent(content, filename = 'unknown') {
   const lines = content.split(/\r?\n/);
   const interactions = new Map();
   const results = [];
   const transactions = []; // Track individual sales transactions
+  const logEntries = []; // Track all log entries for deduplication
 
   const startRe = /ProcessStartInteraction\(\s*(\d+)\s*,\s*([^,]+?)\s*,\s*([0-9.]+)\s*,\s*([^,]+?)\s*,\s*([^,\)\s]+)\s*,?/;
   const vendorRe = /ProcessVendorScreen\(\s*(\d+)\s*,\s*([^,]+?)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,/;
@@ -48,6 +49,7 @@ export function parseLogContent(content) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    const lineNumber = i + 1; // 1-indexed line numbers
     if (!line) continue;
     
     // Check for full date-time format first [2025-12-05 14:30:22]
@@ -140,6 +142,16 @@ export function parseLogContent(content) {
       const timestamp = time ? `${logDate}T${time}Z` : `${logDate}T00:00:00Z`;
       const timestampMs = new Date(timestamp).getTime();
 
+      // Record log entry for deduplication
+      logEntries.push({
+        filename,
+        lineNumber,
+        timestamp,
+        character,
+        type: 'vendor',
+        data: { id: Number(id), npcName, favorLabel, balance, resetTimer, maxBalance }
+      });
+
       results.push({
         id: Number(id),
         time,
@@ -206,8 +218,19 @@ export function parseLogContent(content) {
           
           if (saleAmount > 0) {
             const transactionDate = currentDate || fallbackDate;
+            const transactionTimestamp = time ? `${transactionDate}T${time}Z` : `${transactionDate}T00:00:00Z`;
             
             console.log(`Recording transaction: ${saleAmount} gold to ${matchedSession.npc} on ${transactionDate} at ${time}`);
+            
+            // Record log entry for transaction
+            logEntries.push({
+              filename,
+              lineNumber,
+              timestamp: transactionTimestamp,
+              character: currentCharacter,
+              type: 'transaction',
+              data: { npcId: matchedVendorId, npc: matchedSession.npc, amount: saleAmount }
+            });
             
             transactions.push({
               character: currentCharacter,
@@ -265,12 +288,12 @@ export function parseLogContent(content) {
     }
   });
 
-  console.log(`Parser completed: ${results.length} total entries, ${transactions.length} transactions`);
+  console.log(`Parser completed: ${results.length} total entries, ${transactions.length} transactions, ${logEntries.length} log entries`);
   results.forEach(r => console.log(`  - ${r.npc} (${r.character}): favor=${r.favor}, label=${r.favorLabel}`));
 
-  return { vendors: results, transactions };
+  return { vendors: results, transactions, logEntries };
 }
 
 export function parseLogFileObject(file) {
-  return file.text().then(parseLogContent);
+  return file.text().then(content => parseLogContent(content, file.name));
 }

@@ -72,9 +72,15 @@ app.whenReady().then(() => {
   }
   
   // Resume live monitoring if it was enabled
-  if (store.get('liveMonitoringEnabled') && logDirectory) {
+  const liveEnabled = store.get('liveMonitoringEnabled');
+  console.log(`Startup: liveMonitoringEnabled=${liveEnabled}, logDirectory=${logDirectory}`);
+  
+  if (liveEnabled && logDirectory) {
     liveMonitoringEnabled = true;
-    startLiveLogMonitoring(logDirectory);
+    // Delay slightly to ensure window is ready to receive messages
+    setTimeout(() => {
+      startLiveLogMonitoring(logDirectory);
+    }, 2000);
   }
 });
 
@@ -440,6 +446,11 @@ function startLiveLogMonitoring(logDirectory) {
 
   const playerLogPath = path.join(logDirectory, 'player.log');
   console.log(`Starting live log monitoring: ${playerLogPath}`);
+  
+  // Notify renderer
+  if (mainWindow) {
+    mainWindow.webContents.send('live-monitoring-started', { path: playerLogPath });
+  }
   
   // Reset position to read from current end of file
   fs.stat(playerLogPath)

@@ -94,7 +94,7 @@ const calculateCountdown = (eventHour, eventMinute) => {
   return { hours, minutes, seconds };
 };
 
-const EventsView = () => {
+const EventsView = ({ goBack }) => {
   const [state, setState] = useState(() => loadState());
   const [permission, setPermission] = useState(Notification.permission || 'default');
   const [countdowns, setCountdowns] = useState(() => {
@@ -215,6 +215,15 @@ const EventsView = () => {
 
   return (
     <div className="p-4 md:p-8 pb-8 h-full overflow-y-auto">
+      {goBack && (
+        <button 
+          onClick={goBack}
+          className="mb-4 flex items-center gap-2 text-indigo-400 hover:text-indigo-300 transition-colors text-sm font-medium"
+        >
+          <Icon name="arrow-left" className="w-4 h-4" />
+          Back
+        </button>
+      )}
       <h2 className="text-2xl font-light text-white mb-4">Events</h2>
       <div className="space-y-3">
         {EVENT_DEFS.map(ev => {

@@ -3,7 +3,7 @@ import Icon from '../components/Icon';
 import GameIcon from '../components/GameIcon';
 import { db } from '../db';
 
-const ActiveSkillsView = ({ onNavigate }) => {
+const ActiveSkillsView = ({ onNavigate, goBack }) => {
     const [skills, setSkills] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -21,6 +21,15 @@ const ActiveSkillsView = ({ onNavigate }) => {
 
     return (
         <div className="p-4 md:p-8 pb-4 md:pb-0">
+            {goBack && (
+                <button 
+                  onClick={goBack}
+                  className="mb-4 flex items-center gap-2 text-indigo-400 hover:text-indigo-300 transition-colors text-sm font-medium"
+                >
+                  <Icon name="arrow-left" className="w-4 h-4" />
+                  Back
+                </button>
+              )}
             <h2 className="text-2xl md:text-3xl font-light text-white mb-2">Active Skills</h2>
             <p className="text-slate-400 mb-6 text-sm">Skills with icons or abilities.</p>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">

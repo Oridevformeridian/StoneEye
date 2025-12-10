@@ -451,6 +451,87 @@ export default function IngestView({ onIngestComplete, autoStart }) {
         }
     };
 
+    const handleExportBackup = async () => {
+        try {
+            addLog('Creating backup...');
+            
+            // Export localStorage
+            const localStorageData = {};
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key.startsWith('gorgon_') || key === 'stone_eye_bookmarks' || key === 'ingest_logs') {
+                    localStorageData[key] = localStorage.getItem(key);
+                }
+            }
+            
+            // Export IndexedDB
+            const dbObjects = await db.objects.toArray();
+            
+            const backup = {
+                version: 1,
+                timestamp: new Date().toISOString(),
+                localStorage: localStorageData,
+                indexedDB: dbObjects
+            };
+            
+            // Create downloadable JSON file
+            const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `stoneeye-backup-${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            addLog(`✓ Backup created: ${dbObjects.length} database objects, ${Object.keys(localStorageData).length} localStorage items`);
+        } catch (err) {
+            addLog(`✗ Backup failed: ${err.message}`);
+        }
+    };
+
+    const handleRestoreBackup = async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        try {
+            addLog(`Restoring backup from ${file.name}...`);
+            
+            const text = await file.text();
+            const backup = JSON.parse(text);
+            
+            if (!backup.version || !backup.localStorage || !backup.indexedDB) {
+                throw new Error('Invalid backup file format');
+            }
+            
+            // Restore localStorage
+            Object.entries(backup.localStorage).forEach(([key, value]) => {
+                localStorage.setItem(key, value);
+            });
+            
+            // Restore IndexedDB
+            await db.objects.bulkPut(backup.indexedDB);
+            
+            addLog(`✓ Restore complete: ${backup.indexedDB.length} database objects, ${Object.keys(backup.localStorage).length} localStorage items`);
+            addLog(`Backup was created on ${new Date(backup.timestamp).toLocaleString()}`);
+            
+            checkCharacterData();
+            
+            if (window.showToast) {
+                window.showToast('Backup restored successfully! Refresh the page to see all changes.', 'success');
+            }
+        } catch (err) {
+            addLog(`✗ Restore failed: ${err.message}`);
+            if (window.showToast) {
+                window.showToast(`Restore failed: ${err.message}`, 'error');
+            }
+        }
+        
+        // Reset file input
+        event.target.value = '';
+    };
+
     return (
         <div className="p-8 max-w-6xl mx-auto">
             <h2 className="text-2xl font-light text-white mb-4">Data Import</h2>
@@ -570,9 +651,10 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                                 const parseResult = await parseLogFileObject(file);
                                 const parsed = parseResult.vendors || parseResult;
                                 const transactions = parseResult.transactions || [];
+                                const logEntries = parseResult.logEntries || [];
                                 
                                 setParsedLogs([{ file: file.name, parsed, transactions }]);
-                                addLog(`Parsed ${file.name}: ${parsed.length} entries, ${transactions.length} transactions`);
+                                addLog(`Parsed ${file.name}: ${parsed.length} entries, ${transactions.length} transactions, ${logEntries.length} log entries`);
 
                                 if (parsed && parsed.length > 0) {
                                     const charactersInLog = new Set();
@@ -581,6 +663,31 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                                     });
                                     
                                     addLog(`Found ${charactersInLog.size} characters: ${Array.from(charactersInLog).join(', ')}`);
+                                    
+                                // Check for existing log entries to prevent duplicates
+                                let skippedDuplicates = 0;
+                                const existingEntries = new Set();
+                                if (logEntries.length > 0) {
+                                    const compositeKeys = logEntries.map(e => [e.filename, e.lineNumber, e.timestamp]);
+                                    const existing = await db.logEntries.where('[filename+lineNumber+timestamp]').anyOf(compositeKeys).toArray();
+                                    existing.forEach(e => existingEntries.add(`${e.filename}+${e.lineNumber}+${e.timestamp}`));
+                                    addLog(`Found ${existing.length} existing log entries out of ${logEntries.length} total`);
+                                }
+                                
+                                // Filter to only new log entries
+                                const newLogEntries = logEntries.filter(e => {
+                                    const key = `${e.filename}+${e.lineNumber}+${e.timestamp}`;
+                                    return !existingEntries.has(key);
+                                });                                    if (newLogEntries.length < logEntries.length) {
+                                        skippedDuplicates = logEntries.length - newLogEntries.length;
+                                        addLog(`Skipping ${skippedDuplicates} duplicate log entries`);
+                                    }
+                                    
+                                    // Store new log entries
+                                    if (newLogEntries.length > 0) {
+                                        await db.logEntries.bulkPut(newLogEntries);
+                                        addLog(`Stored ${newLogEntries.length} new log entries`);
+                                    }
                                     
                                     charactersInLog.forEach(charName => {
                                         const charKey = `gorgon_character_${charName}`;
@@ -613,22 +720,27 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                                         }
                                     });
                                     
-                                    // Check timestamps and only update if data is newer
-                                    const entriesToUpdate = [];
-                                    let skippedStale = 0;
-                                    
-                                    for (const p of parsed) {
-                                        const character = p.character;
-                                        const entryId = character ? `${character}_${p.id}_${p.npc}` : `${p.id}_${p.npc}`;
-                                        const name = p.npc || (`vendor_${p.id}`);
-                                        const refs = [];
-                                        if (character) refs.push(`character:${character}`);
-                                        if (p.npc) refs.push(`npc:${p.npc}`, `vendor:${p.npc}`);
+                                    // Only process vendors/transactions if we have new log entries
+                                    // (Skip if all log entries were already processed)
+                                    if (newLogEntries.length === 0 && logEntries.length > 0) {
+                                        addLog(`✓ All log entries already processed - skipping vendor/transaction import`);
+                                    } else {
+                                        // Check timestamps and only update if data is newer
+                                        const entriesToUpdate = [];
+                                        let skippedStale = 0;
                                         
-                                        const newTimestamp = p.timestampMs || 0;
-                                        
-                                        // Check if we already have this vendor
-                                        const existing = await db.objects.get({ type: 'vendors', id: entryId });
+                                        for (const p of parsed) {
+                                            const character = p.character;
+                                            const entryId = character ? `${character}_${p.id}_${p.npc}` : `${p.id}_${p.npc}`;
+                                            const name = p.npc || (`vendor_${p.id}`);
+                                            const refs = [];
+                                            if (character) refs.push(`character:${character}`);
+                                            if (p.npc) refs.push(`npc:${p.npc}`, `vendor:${p.npc}`);
+                                            
+                                            const newTimestamp = p.timestampMs || 0;
+                                            
+                                            // Check if we already have this vendor
+                                            const existing = await db.objects.get({ type: 'vendors', id: entryId });
                                         
                                         if (!existing || !existing.lastUpdated || newTimestamp >= existing.lastUpdated) {
                                             // New data is newer (or equal) - update it
@@ -667,6 +779,11 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                                         
                                         await db.objects.bulkPut(transactionEntries);
                                         addLog(`Ingested ${transactionEntries.length} transactions from ${file.name}`);
+                                    }
+                                    }
+                                    
+                                    if (skippedDuplicates > 0) {
+                                        addLog(`✓ Deduplication: ${skippedDuplicates} log entries already imported`);
                                     }
                                 }
                             } catch (err) {
@@ -729,6 +846,28 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                             <label htmlFor="user-upload" className="cursor-pointer text-sm text-slate-300 hover:text-white block">Click to upload Character/Storage JSON</label>
                         </div>
                         <div className="space-y-2">
+                            <button 
+                                onClick={handleExportBackup}
+                                className="block w-full text-center text-xs font-bold uppercase tracking-wider py-2 px-3 rounded bg-green-600 hover:bg-green-500 text-white transition-colors"
+                            >
+                                💾 Export Backup
+                            </button>
+                            <div className="relative">
+                                <input 
+                                    type="file" 
+                                    accept=".json" 
+                                    onChange={handleRestoreBackup} 
+                                    className="hidden" 
+                                    id="restore-backup" 
+                                />
+                                <label 
+                                    htmlFor="restore-backup"
+                                    className="block w-full text-center text-xs font-bold uppercase tracking-wider py-2 px-3 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors cursor-pointer"
+                                >
+                                    📂 Restore Backup
+                                </label>
+                            </div>
+                            <div className="h-px bg-slate-700 my-3"></div>
                             <button 
                                 onClick={handlePurge} 
                                 className={`block w-full text-center text-xs font-bold uppercase tracking-wider transition-colors ${confirmPurge ? 'text-white bg-red-600 py-2 px-3 rounded' : 'text-red-500 hover:text-red-400 hover:underline'}`}

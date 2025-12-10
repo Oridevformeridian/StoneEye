@@ -3,7 +3,7 @@ import Icon from '../components/Icon';
 import { db } from '../db';
 import ResultRow from '../components/ResultRow';
 
-const BookmarksView = ({ onNavigate }) => {
+const BookmarksView = ({ onNavigate, goBack }) => {
     const [bookmarks, setBookmarks] = useState([]);
     const [items, setItems] = useState([]);
 
@@ -24,6 +24,15 @@ const BookmarksView = ({ onNavigate }) => {
 
     return (
         <div className="p-4 md:p-8 pb-4 md:pb-0">
+              {goBack && (
+                <button 
+                  onClick={goBack}
+                  className="mb-4 flex items-center gap-2 text-indigo-400 hover:text-indigo-300 transition-colors text-sm font-medium"
+                >
+                  <Icon name="arrow-left" className="w-4 h-4" />
+                  Back
+                </button>
+              )}
               <h2 className="text-2xl md:text-3xl font-light text-white mb-2">Bookmarks</h2>
               <p className="text-slate-400 mb-6 text-sm">Your pinned items and recipes.</p>
 

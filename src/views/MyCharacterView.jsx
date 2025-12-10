@@ -5,7 +5,7 @@ import { db } from '../db';
 import { FAVOR_LEVELS } from '../constants';
 import { parseLogFileObject } from '../utils/logParser.js';
 
-const MyCharacterView = ({ onNavigate, goToIngest }) => {
+const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
     const [activeTab, setActiveTab] = useState('stats');
     const [charData, setCharData] = useState(null);
     const [selectedCharId, setSelectedCharId] = useState(null);
@@ -29,11 +29,29 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
     const [npcSort, setNpcSort] = useState('name');
     const [notifyOnReset, setNotifyOnReset] = useState(false);
     const [vendorRefresh, setVendorRefresh] = useState(0);
+    const [viewMode, setViewMode] = useState('cards');
+    const [defaultCharId, setDefaultCharId] = useState(null);
     const [salesData, setSalesData] = useState([]);
     const [allTransactions, setAllTransactions] = useState([]);
     const [ledgerDate, setLedgerDate] = useState(null);
     const [ledgerSort, setLedgerSort] = useState({ key: 'timestamp', direction: 'desc' });
     const [npcFilter, setNpcFilter] = useState('');
+
+    const handleCharacterChange = (charId) => {
+        setSelectedCharId(charId);
+        setViewMode('cards'); // Reset to cards view when changing character
+    };
+    
+    const handleSetDefaultCharacter = (e) => {
+        // Toggle: if currently default, unset it; otherwise set it
+        if (defaultCharId === selectedCharId) {
+            localStorage.removeItem('stoneeye_default_character');
+            setDefaultCharId(null);
+        } else if (selectedCharId) {
+            localStorage.setItem('stoneeye_default_character', selectedCharId);
+            setDefaultCharId(selectedCharId);
+        }
+    };
 
     const handleCharLogUpload = async (e) => {
         const files = Array.from(e.target.files || []);
@@ -42,14 +60,47 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
         let totalEntries = 0;
         let totalTransactions = 0;
         let filesProcessed = 0;
+        let skippedDuplicates = 0;
         
         try {
             for (const file of files) {
                 const parseResult = await parseLogFileObject(file);
                 const parsed = parseResult.vendors || parseResult; // Handle both old and new format
                 const transactions = parseResult.transactions || [];
+                const logEntries = parseResult.logEntries || [];
                 
-                if (parsed && parsed.length > 0) {
+                console.log(`Processing ${file.name}: ${logEntries.length} log entries, ${parsed.length} vendors, ${transactions.length} transactions`);
+                
+                // Check for existing log entries to prevent duplicates
+                const existingEntries = new Set();
+                if (logEntries.length > 0) {
+                    const compositeKeys = logEntries.map(e => [e.filename, e.lineNumber, e.timestamp]);
+                    const existing = await db.logEntries.where('[filename+lineNumber+timestamp]').anyOf(compositeKeys).toArray();
+                    existing.forEach(e => existingEntries.add(`${e.filename}+${e.lineNumber}+${e.timestamp}`));
+                    console.log(`Found ${existing.length} existing log entries out of ${logEntries.length} total`);
+                }
+                
+                // Filter log entries to only new ones
+                const newLogEntries = logEntries.filter(e => {
+                    const key = `${e.filename}+${e.lineNumber}+${e.timestamp}`;
+                    return !existingEntries.has(key);
+                });
+                
+                if (newLogEntries.length < logEntries.length) {
+                    skippedDuplicates += (logEntries.length - newLogEntries.length);
+                    console.log(`Skipping ${logEntries.length - newLogEntries.length} duplicate log entries`);
+                }
+                
+                // Store new log entries in database
+                if (newLogEntries.length > 0) {
+                    await db.logEntries.bulkPut(newLogEntries);
+                    console.log(`Stored ${newLogEntries.length} new log entries`);
+                }
+                
+                // Only process vendors/transactions if we have new log entries
+                if (newLogEntries.length === 0 && logEntries.length > 0) {
+                    console.log(`All log entries already processed - skipping ${file.name}`);
+                } else if (parsed && parsed.length > 0) {
                     const entries = parsed.map(p => {
                         const entryId = `${selectedCharId}_${p.id}_${p.npc}`;
                         const name = p.npc || (`vendor_${p.id}`);
@@ -86,14 +137,14 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                         await db.objects.bulkPut(transactionEntries);
                         totalTransactions += transactionEntries.length;
                     }
-                    
-                    filesProcessed++;
                 }
+                
+                filesProcessed++;
             }
             
             // Reload vendor data after import
             if (filesProcessed > 0) {
-                console.log(`Imported ${totalEntries} vendor entries and ${totalTransactions} transactions from ${filesProcessed} file(s)`);
+                console.log(`Imported ${totalEntries} vendor entries and ${totalTransactions} transactions from ${filesProcessed} file(s)${skippedDuplicates > 0 ? ` (skipped ${skippedDuplicates} duplicates)` : ''}`);
                 // Force vendor data reload
                 setVendorRefresh(prev => prev + 1);
             }
@@ -135,7 +186,16 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
             }
             const charList = Array.from(chars).sort();
             setAvailableChars(charList);
-            if (charList.length > 0 && !selectedCharId) {
+            
+            // Load default character preference
+            const savedDefault = localStorage.getItem('stoneeye_default_character');
+            if (savedDefault) {
+                setDefaultCharId(savedDefault);
+                // Auto-select default character if set and available
+                if (charList.includes(savedDefault) && !selectedCharId) {
+                    setSelectedCharId(savedDefault);
+                }
+            } else if (charList.length > 0 && !selectedCharId) {
                 setSelectedCharId(charList[0]);
             }
             setLoading(false);
@@ -461,13 +521,58 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     const vendorEntries = await db.objects.where('type').equals('vendors').toArray();
                     const charVendors = vendorEntries.filter(e => e.refs && e.refs.includes(`character:${selectedCharId}`));
                     
-                    // Load NPC data to get SoulMateRequirement
+                    // Load NPC data to get SoulMateRequirement and Preferences
                     const allNpcs = await db.objects.where('type').equals('npcs').toArray();
                     const npcDataMap = {};
                     allNpcs.forEach(npc => {
-                        const internalName = npc.data.InternalName || npc.name;
-                        npcDataMap[internalName] = npc.data;
+                        // Build comprehensive lookup map with all possible name variations
+                        const names = [
+                            npc.data.InternalName,
+                            npc.data.Name,
+                            npc.name,
+                            npc.data.Name ? `NPC_${npc.data.Name}` : null,
+                            npc.data.InternalName ? `NPC_${npc.data.InternalName}` : null,
+                            // Remove spaces for camelCase matching (e.g., "Hulon the Hoarder" -> "HulontheHoarder")
+                            npc.data.Name ? npc.data.Name.replace(/\s+/g, '') : null,
+                            npc.data.Name ? `NPC_${npc.data.Name.replace(/\s+/g, '')}` : null,
+                            // Remove "The " prefix (e.g., "The Sand Seer" -> "Sand Seer")
+                            npc.data.Name && npc.data.Name.startsWith('The ') ? npc.data.Name.substring(4) : null,
+                            npc.data.Name && npc.data.Name.startsWith('The ') ? npc.data.Name.substring(4).replace(/\s+/g, '') : null,
+                            npc.data.Name && npc.data.Name.startsWith('The ') ? `NPC_${npc.data.Name.substring(4).replace(/\s+/g, '')}` : null
+                        ];
+                        names.forEach(name => {
+                            if (name) npcDataMap[name] = npc.data;
+                        });
                     });
+                    
+                    // Helper function for fuzzy NPC lookup
+                    const findNpcData = (...searchNames) => {
+                        // Try exact matches first
+                        for (const name of searchNames) {
+                            if (name && npcDataMap[name]) return npcDataMap[name];
+                        }
+                        // Try case-insensitive with space normalization
+                        for (const name of searchNames) {
+                            if (!name) continue;
+                            const normalized = name.toLowerCase().replace(/\s+/g, '');
+                            const matchKey = Object.keys(npcDataMap).find(key => 
+                                key.toLowerCase().replace(/\s+/g, '') === normalized
+                            );
+                            if (matchKey) return npcDataMap[matchKey];
+                        }
+                        // Try partial match: if searchName matches the start of an NPC name
+                        // e.g., "Landri" should match "Landri the Cold"
+                        for (const name of searchNames) {
+                            if (!name || name.length < 3) continue; // Require at least 3 chars
+                            const normalized = name.toLowerCase().replace(/\s+/g, '');
+                            const matchKey = Object.keys(npcDataMap).find(key => {
+                                const keyNormalized = key.toLowerCase().replace(/\s+/g, '');
+                                return keyNormalized.startsWith(normalized) || normalized.startsWith(keyNormalized);
+                            });
+                            if (matchKey) return npcDataMap[matchKey];
+                        }
+                        return null;
+                    };
                     
                     const npcFavor = currentCharData.data.NpcFavor || {};
                     const npcMap = new Map();
@@ -489,8 +594,13 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                             
                             console.log(`  Creating new entry: logFavor=${logFavor}, displayNameWithSpaces="${displayNameWithSpaces}", charFavor=${charFavor}, final=${logFavor || charFavor}`);
                             
-                            // Get soul mate requirement from NPC data
-                            const npcInfo = npcDataMap[npcName] || npcDataMap[displayName];
+                            // Get NPC data (SoulMateRequirement and Preferences)
+                            const npcInfo = findNpcData(npcName, displayName, displayNameWithSpaces);
+                            const loveItems = npcInfo?.Preferences?.filter(p => p.Desire === 'Love' || p.Desire === 'Like') || [];
+                            console.log(`  NPC lookup for "${displayName}": found=${!!npcInfo}, hasPreferences=${!!npcInfo?.Preferences}, prefCount=${npcInfo?.Preferences?.length || 0}, loveCount=${loveItems.length}`);
+                            if (npcInfo?.Preferences && loveItems.length === 0) {
+                                console.log(`  WARNING: ${displayName} has ${npcInfo.Preferences.length} preferences but 0 Love/Like items:`, npcInfo.Preferences.map(p => `${p.Name} (${p.Desire})`));
+                            }
                             const soulMateReq = npcInfo?.SoulMateRequirement || 6000;
                             npcMap.set(npcName, {
                                 id: v.id,
@@ -500,7 +610,8 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                 currentFavor: logFavor || charFavor,
                                 soulMateRequirement: soulMateReq,
                                 storageVault: null,
-                                hasVendorLog: true
+                                hasVendorLog: true,
+                                npcData: npcInfo
                             });
                         } else {
                             // Update existing entry with log data
@@ -510,6 +621,7 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                             existing.data = v.data;
                             existing.currentFavor = logFavor || existing.currentFavor;
                             existing.hasVendorLog = true;
+                            existing.npcData = findNpcData(npcName, existing.name);
                         }
                     });
                     
@@ -530,7 +642,7 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                             } else {
                                 // Create entry for NPCs we have storage for but no vendor log
                                 const displayName = friendlyName || vaultKey.replace('NPC_', '');
-                                const npcInfo = npcDataMap[vaultKey] || npcDataMap[displayName];
+                                const npcInfo = findNpcData(vaultKey, displayName, friendlyName);
                                 const soulMateReq = npcInfo?.SoulMateRequirement || 6000;
                                 npcMap.set(vaultKey, {
                                     id: `storage_${vaultKey}`,
@@ -546,7 +658,8 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                     currentFavor: npcFavor[displayName] || npcFavor[vaultKey] || 0,
                                     soulMateRequirement: soulMateReq,
                                     storageVault: vaultData,
-                                    hasVendorLog: false
+                                    hasVendorLog: false,
+                                    npcData: npcInfo
                                 });
                             }
                         }
@@ -560,7 +673,7 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                         
                         if (!npcMap.has(npcKey) && !npcMap.has(altKey) && !npcMap.has(npcName)) {
                             const displayName = npcName.startsWith('NPC_') ? npcName.replace('NPC_', '') : npcName;
-                            const npcInfo = npcDataMap[npcKey] || npcDataMap[npcName] || npcDataMap[displayName];
+                            const npcInfo = findNpcData(npcKey, npcName, displayName, altKey);
                             const soulMateReq = npcInfo?.SoulMateRequirement || 6000;
                             
                             npcMap.set(npcKey, {
@@ -578,12 +691,19 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                 currentFavor: favor,
                                 soulMateRequirement: soulMateReq,
                                 storageVault: null,
-                                hasVendorLog: false
+                                hasVendorLog: false,
+                                npcData: npcInfo
                             });
                         }
                     });
                     
                     setVendorData(Array.from(npcMap.values()));
+                    
+                    // Default to table view if 4+ vendors
+                    const vendorCount = npcMap.size;
+                    if (vendorCount >= 4 && viewMode === 'cards') {
+                        setViewMode('table');
+                    }
                 } else {
                     setVendorData([]);
                 }
@@ -794,16 +914,36 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
 
     return (
         <div className="p-4 md:p-8 pb-4 md:pb-0 h-full flex flex-col">
+            {goBack && (
+                <button 
+                    onClick={goBack}
+                    className="mb-4 flex items-center gap-2 text-indigo-400 hover:text-indigo-300 transition-colors text-sm font-medium"
+                >
+                    <Icon name="arrow-left" className="w-4 h-4" />
+                    Back
+                </button>
+            )}
             <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
                 <div className="flex items-center gap-4">
                     <h2 className="text-2xl font-light text-white">My Character:</h2>
                     <select 
                         value={selectedCharId} 
-                        onChange={(e) => setSelectedCharId(e.target.value)}
+                        onChange={(e) => handleCharacterChange(e.target.value)}
                         className="bg-slate-800 border border-slate-700 rounded px-3 py-1 text-slate-200 focus:outline-none focus:border-indigo-500"
                     >
                         {availableChars.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
+                    <button
+                        onClick={handleSetDefaultCharacter}
+                        className={`px-2 py-1 rounded border text-xs font-bold flex items-center gap-1.5 transition-colors ${
+                            defaultCharId === selectedCharId ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
+                        }`}
+                        title="Set as default character"
+                        disabled={!selectedCharId}
+                    >
+                        {defaultCharId === selectedCharId ? <Icon name="check-square" className="w-3.5 h-3.5" /> : <Icon name="square" className="w-3.5 h-3.5" />}
+                        Default
+                    </button>
                 </div>
                 <div className="flex bg-slate-800 rounded p-1 gap-1 self-start md:self-auto">
                     <button onClick={()=>setActiveTab('stats')} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==='stats'?'bg-indigo-600 text-white':'text-slate-400'}`}>Stats</button>
@@ -1100,6 +1240,26 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     <div className="flex justify-between items-center mb-4 shrink-0">
                         <h3 className="text-lg font-light text-white">Character NPCs & Vendors</h3>
                         <div className="flex gap-2 items-center">
+                            <div className="flex gap-1 border border-slate-700 rounded overflow-hidden">
+                                <button
+                                    onClick={() => setViewMode('cards')}
+                                    className={`px-3 py-1 text-xs font-bold transition-colors ${
+                                        viewMode === 'cards' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                    }`}
+                                    title="Card View"
+                                >
+                                    <Icon name="grid" className="w-4 h-4" />
+                                </button>
+                                <button
+                                    onClick={() => setViewMode('table')}
+                                    className={`px-3 py-1 text-xs font-bold transition-colors ${
+                                        viewMode === 'table' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                    }`}
+                                    title="Table View"
+                                >
+                                    <Icon name="list" className="w-4 h-4" />
+                                </button>
+                            </div>
                             <input 
                                 type="text"
                                 placeholder="Filter NPCs..."
@@ -1142,8 +1302,9 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                     </div>
                     
                     <div className="overflow-y-auto h-full">
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {vendorData
+                        {viewMode === 'cards' ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {vendorData
                                 .sort((a, b) => {
                                     if (npcSort === 'favor') {
                                         return (b.currentFavor || 0) - (a.currentFavor || 0);
@@ -1165,6 +1326,8 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                     if (hideSoulMates && v.currentFavor >= 3000) return false;
                                     // Hide "Interaction" entries with 0 favor (likely items, not NPCs)
                                     if (v.data.favorLabel === 'Interaction' && (v.currentFavor || 0) === 0) return false;
+                                    // Hide unknown_ entries
+                                    if (v.name && v.name.toLowerCase().startsWith('unknown_')) return false;
                                     // Filter by name
                                     if (npcFilter && !v.name.toLowerCase().includes(npcFilter.toLowerCase())) return false;
                                     return true;
@@ -1242,6 +1405,32 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                                 </div>
                                             </div>
                                             
+                                            {/* Preferred Gifts (hide for Soul Mates) */}
+                                            {vendor.currentFavor < 3000 && vendor.npcData?.Preferences && vendor.npcData.Preferences.length > 0 && (
+                                                <div className="mb-3 pt-3 border-t border-slate-700/50">
+                                                    <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">Preferred Gifts</div>
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {vendor.npcData.Preferences
+                                                            .filter(pref => pref.Desire === 'Love' || pref.Desire === 'Like')
+                                                            .map((pref, idx) => (
+                                                            <button
+                                                                key={idx}
+                                                                onClick={() => {
+                                                                    // Try to navigate to item if it's a simple item keyword
+                                                                    if (pref.Keywords && pref.Keywords.length === 1 && !pref.Keywords[0].includes(':')) {
+                                                                        onNavigate('items', pref.Keywords[0]);
+                                                                    }
+                                                                }}
+                                                                className="text-[10px] bg-slate-900/60 hover:bg-indigo-600 border border-slate-700 hover:border-indigo-500 rounded px-2 py-1 text-slate-300 hover:text-white transition-colors"
+                                                                title={`${pref.Desire} (${pref.Pref})`}
+                                                            >
+                                                                {pref.Name}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            
                                             {/* Vendor Info */}
                                             <div className="space-y-2 mb-3">
                                                 <div className="flex justify-between text-xs">
@@ -1290,7 +1479,162 @@ const MyCharacterView = ({ onNavigate, goToIngest }) => {
                                         </div>
                                     );
                                 })}
-                        </div>
+                            </div>
+                        ) : (
+                            <div className="border border-slate-700 rounded-xl bg-slate-900/50 shadow-sm overflow-hidden">
+                                <table className="w-full text-left text-sm border-collapse">
+                                    <thead className="bg-slate-800 text-slate-400 sticky top-0 z-10 shadow-md">
+                                        <tr>
+                                            <th className="p-3 font-semibold border-b border-slate-700 text-[10px] uppercase tracking-wider">NPC</th>
+                                            <th className="p-3 font-semibold border-b border-slate-700 text-[10px] uppercase tracking-wider text-center">Favor</th>
+                                            <th className="p-3 font-semibold border-b border-slate-700 text-[10px] uppercase tracking-wider text-right">Balance</th>
+                                            <th className="p-3 font-semibold border-b border-slate-700 text-[10px] uppercase tracking-wider text-center">Reset</th>
+                                            <th className="p-3 font-semibold border-b border-slate-700 text-[10px] uppercase tracking-wider text-center">Storage</th>
+                                            <th className="p-3 font-semibold border-b border-slate-700 text-[10px] uppercase tracking-wider">Gifts</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-700/50">
+                                        {vendorData
+                                            .sort((a, b) => {
+                                                if (npcSort === 'favor') {
+                                                    return (b.currentFavor || 0) - (a.currentFavor || 0);
+                                                } else if (npcSort === 'balance') {
+                                                    const aBalance = a.data.balance === 2147483647 ? 0 : (a.data.balance || 0);
+                                                    const bBalance = b.data.balance === 2147483647 ? 0 : (b.data.balance || 0);
+                                                    return bBalance - aBalance;
+                                                } else if (npcSort === 'emptySpace') {
+                                                    const aEmpty = a.storageVault ? (a.storageVault.max - a.storageVault.count) : 0;
+                                                    const bEmpty = b.storageVault ? (b.storageVault.max - b.storageVault.count) : 0;
+                                                    return bEmpty - aEmpty;
+                                                } else {
+                                                    return (a.name || '').localeCompare(b.name || '');
+                                                }
+                                            })
+                                            .filter(v => {
+                                                if (hideNoStorage && !v.storageVault) return false;
+                                                if (hideSoulMates && v.currentFavor >= 3000) return false;
+                                                if (v.data.favorLabel === 'Interaction' && (v.currentFavor || 0) === 0) return false;
+                                                // Hide unknown_ entries
+                                                if (v.name && v.name.toLowerCase().startsWith('unknown_')) return false;
+                                                if (npcFilter && !v.name.toLowerCase().includes(npcFilter.toLowerCase())) return false;
+                                                return true;
+                                            })
+                                            .map(vendor => {
+                                                const soulMatesFavor = 3000;
+                                                const favorProgress = (vendor.currentFavor / soulMatesFavor) * 100;
+                                                const resetDate = new Date(vendor.data.resetTimer);
+                                                const now = new Date();
+                                                const timeUntilReset = Math.max(0, Math.floor((resetDate - now) / 1000));
+                                                const hoursUntilReset = Math.floor(timeUntilReset / 3600);
+                                                const minutesUntilReset = Math.floor((timeUntilReset % 3600) / 60);
+                                                const displayBalance = vendor.data.balance === 2147483647 ? 0 : vendor.data.balance;
+                                                const displayMaxBalance = vendor.data.maxBalance === 2147483647 ? 0 : vendor.data.maxBalance;
+                                                
+                                                let favorColor = 'bg-slate-600';
+                                                if (vendor.currentFavor >= 3000) favorColor = 'bg-pink-500';
+                                                else if (vendor.currentFavor >= 2000) favorColor = 'bg-purple-500';
+                                                else if (vendor.currentFavor >= 1200) favorColor = 'bg-blue-500';
+                                                else if (vendor.currentFavor >= 600) favorColor = 'bg-green-500';
+                                                else if (vendor.currentFavor >= 300) favorColor = 'bg-emerald-500';
+                                                else if (vendor.currentFavor >= 100) favorColor = 'bg-yellow-500';
+                                                
+                                                return (
+                                                    <tr key={vendor.id} className="hover:bg-slate-800/30 transition-colors group">
+                                                        <td className="p-3">
+                                                            <button 
+                                                                onClick={() => onNavigate('npcs', vendor.data.npc || vendor.name)}
+                                                                className="text-xs font-bold text-white hover:text-indigo-400 hover:underline text-left"
+                                                            >
+                                                                {vendor.name}
+                                                            </button>
+                                                            <div className="text-[9px] text-slate-500 uppercase tracking-wide mt-0.5">
+                                                                {vendor.data.favorLabel || 'Vendor'}
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-3">
+                                                            <div className="flex flex-col items-center gap-1">
+                                                                <div className="text-[10px] font-mono font-bold text-slate-300">{vendor.currentFavor}</div>
+                                                                <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                                                                    <div 
+                                                                        className={`h-full ${favorColor} transition-all duration-500`}
+                                                                        style={{ width: `${Math.min(100, favorProgress)}%` }}
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-3 text-right">
+                                                            <div className="text-xs font-mono font-bold text-emerald-400">
+                                                                {displayBalance?.toLocaleString() || 0}
+                                                            </div>
+                                                            {displayMaxBalance > 0 && (
+                                                                <div className="text-[9px] text-slate-500 mt-0.5">/ {displayMaxBalance.toLocaleString()}</div>
+                                                            )}
+                                                        </td>
+                                                        <td className="p-3 text-center">
+                                                            <div className={`text-xs font-mono font-bold ${
+                                                                timeUntilReset <= 0 ? 'text-green-400' : 
+                                                                timeUntilReset < 3600 ? 'text-yellow-400' : 
+                                                                'text-amber-400'
+                                                            }`}>
+                                                                {timeUntilReset > 0 ? `${hoursUntilReset}h ${minutesUntilReset}m` : 'Ready!'}
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-3">
+                                                            {vendor.storageVault ? (
+                                                                <div className="flex flex-col items-center gap-1">
+                                                                    <div className="text-[10px] font-mono font-bold text-slate-300">
+                                                                        {vendor.storageVault.count} / {vendor.storageVault.max}
+                                                                    </div>
+                                                                    <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                                                                        <div 
+                                                                            className={`h-full transition-all duration-500 ${
+                                                                                (vendor.storageVault.count / vendor.storageVault.max) > 0.9 ? 'bg-red-500' : 
+                                                                                (vendor.storageVault.count / vendor.storageVault.max) > 0.75 ? 'bg-amber-500' : 
+                                                                                'bg-indigo-600'
+                                                                            }`}
+                                                                            style={{ width: `${Math.min(100, (vendor.storageVault.count / vendor.storageVault.max) * 100)}%` }}
+                                                                        />
+                                                                    </div>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="text-[10px] text-slate-600 text-center">—</div>
+                                                            )}
+                                                        </td>
+                                                        <td className="p-3">
+                                                            {vendor.currentFavor < 3000 && vendor.npcData?.Preferences && vendor.npcData.Preferences.length > 0 ? (
+                                                                <div className="flex flex-wrap gap-1">
+                                                                    {vendor.npcData.Preferences
+                                                                        .filter(pref => pref.Desire === 'Love' || pref.Desire === 'Like')
+                                                                        .slice(0, 3)
+                                                                        .map((pref, idx) => (
+                                                                        <button
+                                                                            key={idx}
+                                                                            onClick={() => {
+                                                                                if (pref.Keywords && pref.Keywords.length === 1 && !pref.Keywords[0].includes(':')) {
+                                                                                    onNavigate('items', pref.Keywords[0]);
+                                                                                }
+                                                                            }}
+                                                                            className="text-[9px] bg-slate-900/60 hover:bg-indigo-600 border border-slate-700 hover:border-indigo-500 rounded px-1.5 py-0.5 text-slate-300 hover:text-white transition-colors"
+                                                                            title={`${pref.Desire} (${pref.Pref})`}
+                                                                        >
+                                                                            {pref.Name}
+                                                                        </button>
+                                                                    ))}
+                                                                    {vendor.npcData.Preferences.filter(pref => pref.Desire === 'Love' || pref.Desire === 'Like').length > 3 && (
+                                                                        <span className="text-[9px] text-slate-500 px-1">+{vendor.npcData.Preferences.filter(pref => pref.Desire === 'Love' || pref.Desire === 'Like').length - 3}</span>
+                                                                    )}
+                                                                </div>
+                                                            ) : (
+                                                                <div className="text-[10px] text-slate-600">—</div>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
                         
                         {vendorData.filter(v => !hideNoStorage || v.storageVault).length === 0 && (
                             <div className="text-center py-12 text-slate-500">

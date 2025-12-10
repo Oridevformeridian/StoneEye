@@ -38,5 +38,10 @@ contextBridge.exposeInMainWorld('electron', {
     const subscription = (event, data) => callback(data);
     ipcRenderer.on('live-log-update', subscription);
     return () => ipcRenderer.removeListener('live-log-update', subscription);
+  },
+  onLiveMonitoringStarted: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('live-monitoring-started', subscription);
+    return () => ipcRenderer.removeListener('live-monitoring-started', subscription);
   }
 });

@@ -3,7 +3,7 @@ import Icon from '../components/Icon';
 import { db } from '../db';
 import { FAVOR_LEVELS } from '../constants';
 
-const NpcServicesView = ({ onNavigate }) => {
+const NpcServicesView = ({ onNavigate, goBack }) => {
     const [npcData, setNpcData] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -69,6 +69,15 @@ const NpcServicesView = ({ onNavigate }) => {
 
     return (
         <div className="p-4 md:p-8 pb-4 md:pb-0 h-full overflow-hidden flex flex-col gap-8">
+            {goBack && (
+                <button 
+                  onClick={goBack}
+                  className="flex items-center gap-2 text-indigo-400 hover:text-indigo-300 transition-colors text-sm font-medium shrink-0"
+                >
+                  <Icon name="arrow-left" className="w-4 h-4" />
+                  Back
+                </button>
+              )}
             <div className="flex flex-col h-full min-h-[300px]">
                  <div className="shrink-0 mb-4">
                     <h2 className="text-2xl font-light text-white mb-1">NPC Storage</h2>
