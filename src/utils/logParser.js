@@ -1,6 +1,6 @@
-export function parseLogContent(content, filename = 'unknown') {
+export function parseLogContent(content, filename = 'unknown', context = null) {
   const lines = content.split(/\r?\n/);
-  const interactions = new Map();
+  const interactions = context?.interactions || new Map();
   const results = [];
   const transactions = []; // Track individual sales transactions
   const logEntries = []; // Track all log entries for deduplication
@@ -8,19 +8,20 @@ export function parseLogContent(content, filename = 'unknown') {
   const startRe = /ProcessStartInteraction\(\s*(\d+)\s*,\s*([^,]+?)\s*,\s*([0-9.]+)\s*,\s*([^,]+?)\s*,\s*([^,\)\s]+)\s*,?/;
   const vendorRe = /ProcessVendorScreen\(\s*(\d+)\s*,\s*([^,]+?)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,/;
   const vendorUpdateRe = /ProcessVendorUpdateAvailableGold\(\s*([0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,/;
-  const loginRe = /Logged in as character\s+(\S+)\.\s+Time UTC=(\d{2})\/(\d{2})\/(\d{4})\s+/;
+  const loginRe = /Logged in as character\s+(\S+)\.\s+Time UTC=(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}:\d{2}:\d{2})\.\s+Timezone Offset\s+([+-]\d{2}:\d{2}:\d{2})/;
   const timeRe = /^\[(\d{2}:\d{2}:\d{2})\]\s*/;
   const dateRe = /^\[(\d{4}-\d{2}-\d{2})\s+/;
   const fullDateTimeRe = /^\[(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\]/;
 
-  let currentCharacter = null;
-  let lastVendorId = null; // Track the most recent vendor screen opened
-  let lastVendorBalance = null; // Track balance to calculate sale amount
-  let currentDate = null; // Track the date from log file
-  let lastTime = null; // Track last timestamp to detect date rollovers
+  let currentCharacter = context?.character || null;
+  let lastVendorId = context?.lastVendorId || null; // Track the most recent vendor screen opened
+  let lastVendorBalance = context?.lastVendorBalance || null; // Track balance to calculate sale amount
+  let currentDate = context?.currentDate || null; // Track the date from log file
+  let lastTime = context?.lastTime || null; // Track last timestamp to detect date rollovers
+  let timezoneOffset = context?.timezoneOffset || null; // Timezone offset in minutes from UTC
   
   // Track all active vendor sessions to handle busy areas with multiple conversations
-  const vendorSessions = new Map(); // key: vendorId, value: { balance, resetTimer, maxBalance, character, npc }
+  const vendorSessions = context?.vendorSessions || new Map(); // key: vendorId, value: { balance, resetTimer, maxBalance, character, npc }
   
   // If no date found in logs, use today's date as fallback
   const fallbackDate = new Date().toISOString().split('T')[0];
@@ -86,12 +87,25 @@ export function parseLogContent(content, filename = 'unknown') {
     let m = line.match(loginRe);
     if (m) {
       currentCharacter = m[1];
-      // Extract date from UTC timestamp (MM/DD/YYYY format)
+      // Extract date and time from UTC timestamp (MM/DD/YYYY HH:MM:SS format)
       const month = m[2];
       const day = m[3];
       const year = m[4];
-      currentDate = `${year}-${month}-${day}`;
-      console.log(`Detected character login: ${currentCharacter} on ${currentDate}`);
+      const loginTime = m[5];
+      const tzOffset = m[6]; // Format: +HH:MM:SS or -HH:MM:SS
+      
+      currentDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+      
+      // Parse timezone offset to minutes
+      const tzMatch = tzOffset.match(/([+-])(\d{2}):(\d{2}):(\d{2})/);
+      if (tzMatch) {
+        const sign = tzMatch[1] === '+' ? 1 : -1;
+        const hours = parseInt(tzMatch[2]);
+        const minutes = parseInt(tzMatch[3]);
+        timezoneOffset = sign * (hours * 60 + minutes);
+      }
+      
+      console.log(`Detected character login: ${currentCharacter} on ${currentDate} at ${loginTime} UTC (timezone offset: ${timezoneOffset} minutes)`);
       continue;
     }
 
@@ -137,7 +151,7 @@ export function parseLogContent(content, filename = 'unknown') {
         time
       });
 
-      // Build full timestamp for temporal ordering
+      // Build full timestamp for temporal ordering (stored in UTC)
       const logDate = currentDate || fallbackDate;
       const timestamp = time ? `${logDate}T${time}Z` : `${logDate}T00:00:00Z`;
       const timestampMs = new Date(timestamp).getTime();
@@ -147,9 +161,11 @@ export function parseLogContent(content, filename = 'unknown') {
         filename,
         lineNumber,
         timestamp,
+        content: line,
         character,
         type: 'vendor',
-        data: { id: Number(id), npcName, favorLabel, balance, resetTimer, maxBalance }
+        data: { id: Number(id), npcName, favorLabel, balance, resetTimer, maxBalance },
+        timezoneOffset
       });
 
       results.push({
@@ -227,9 +243,11 @@ export function parseLogContent(content, filename = 'unknown') {
               filename,
               lineNumber,
               timestamp: transactionTimestamp,
+              content: line,
               character: currentCharacter,
               type: 'transaction',
-              data: { npcId: matchedVendorId, npc: matchedSession.npc, amount: saleAmount }
+              data: { npcId: matchedVendorId, npc: matchedSession.npc, amount: saleAmount },
+              timezoneOffset
             });
             
             transactions.push({
@@ -237,9 +255,8 @@ export function parseLogContent(content, filename = 'unknown') {
               npc: matchedSession.npc,
               npcId: matchedVendorId,
               amount: saleAmount,
-              date: transactionDate,
-              time: time,
-              timestamp: resetTimer // Use the reset timer as transaction timestamp
+              timestampUTC: transactionTimestamp,
+              timezoneOffsetMinutes: timezoneOffset
             });
           }
           
@@ -291,7 +308,22 @@ export function parseLogContent(content, filename = 'unknown') {
   console.log(`Parser completed: ${results.length} total entries, ${transactions.length} transactions, ${logEntries.length} log entries`);
   results.forEach(r => console.log(`  - ${r.npc} (${r.character}): favor=${r.favor}, label=${r.favorLabel}`));
 
-  return { vendors: results, transactions, logEntries };
+  return { 
+    vendors: results, 
+    transactions, 
+    logEntries, 
+    currentCharacter,
+    context: {
+      character: currentCharacter,
+      lastVendorId,
+      lastVendorBalance,
+      currentDate,
+      lastTime,
+      vendorSessions,
+      interactions,
+      timezoneOffset
+    }
+  };
 }
 
 export function parseLogFileObject(file) {

@@ -18,6 +18,8 @@ import SkillDetail from './components/SkillDetail.jsx';
 import TreasureDetail from './components/TreasureDetail.jsx';
 import GenericDetail from './components/GenericDetail.jsx';
 import StatBox from './components/StatBox.jsx';
+import { useLogMonitor } from './hooks/useLogMonitor';
+import LogMonitorStatus from './components/LogMonitorStatus';
 
 // Views
 import IngestView from './views/IngestView.jsx';
@@ -355,6 +357,8 @@ export default function App() {
     const [totalRecords, setTotalRecords] = useState(0);
     const [autoIngest, setAutoIngest] = useState(false);
     const [toasts, setToasts] = useState([]);
+    
+    const { status: monitorStatus, lastUpdate: monitorLastUpdate, stats: monitorStats } = useLogMonitor();
 
     const activeState = historyStack[historyIndex];
     const activeTab = activeState.tab;
@@ -375,18 +379,6 @@ export default function App() {
         return () => {
             delete window.showToast;
         };
-    }, []);
-
-    // Listen for live monitoring started event from main process
-    useEffect(() => {
-        if (window.electron?.onLiveMonitoringStarted) {
-            const unsubscribe = window.electron.onLiveMonitoringStarted((data) => {
-                if (window.showToast) {
-                    window.showToast(`🔴 Live monitoring started automatically`, 'success');
-                }
-            });
-            return () => unsubscribe();
-        }
     }, []);
 
     useEffect(() => {
@@ -563,6 +555,9 @@ export default function App() {
                             <MobileNavBtn active={activeTab === 'ingest'} onClick={() => navigate('ingest')} icon="download" label="Import" />
                 </div>
             </nav>
+            
+            {/* Log Monitor Status */}
+            <LogMonitorStatus status={monitorStatus} lastUpdate={monitorLastUpdate} stats={monitorStats} />
             
             {/* Toast Notifications */}
             <div className="fixed bottom-20 md:bottom-4 right-4 z-[60] space-y-2 pointer-events-none">

@@ -72,8 +72,8 @@ app.whenReady().then(() => {
   
   // Resume auto-import if it was enabled
   if (store.get('autoImportEnabled') && logDirectory) {
-    setImmediate(() => checkForNewImports());
-    importCheckInterval = setInterval(() => checkForNewImports(), 10000);
+    setImmediate(() => checkForNewImports(true));
+    importCheckInterval = setInterval(() => checkForNewImports(false), 10000);
   }
   
   // Resume live monitoring if it was enabled
@@ -394,12 +394,16 @@ async function archiveLog(filePath) {
   }
 }
 
-async function checkForNewImports() {
+async function checkForNewImports(isInitial = false) {
   if (!store.get('autoImportEnabled')) return;
   
   const logDirectory = store.get('logDirectory');
   if (!logDirectory) return;
   
+  if (isInitial && mainWindow) {
+    mainWindow.webContents.send('log-monitor-message', { message: 'Checking for new report files...' });
+  }
+
   const reportsPath = path.join(logDirectory, 'reports');
   
   try {
@@ -448,10 +452,16 @@ async function checkForNewImports() {
       store.set('lastImportedExports', lastImportedExports);
       if (mainWindow) {
         mainWindow.webContents.send('auto-import-exports', { exports: newExports });
+        mainWindow.webContents.send('log-monitor-message', { message: `Found ${newExports.length} new report files.` });
       }
+    } else if (isInitial && mainWindow) {
+      mainWindow.webContents.send('log-monitor-message', { message: 'No new report files found.' });
     }
   } catch (err) {
     // Reports directory doesn't exist or error reading
+    if (isInitial && mainWindow) {
+      mainWindow.webContents.send('log-monitor-message', { message: 'Reports directory not found or inaccessible.' });
+    }
   }
 }
 
@@ -473,7 +483,7 @@ function startLiveLogMonitoring(logDirectory) {
   // Reset position to read from current end of file
   fs.stat(playerLogPath)
     .then(stats => {
-      lastLogPosition = stats.size;
+      lastLogPosition = 0; // Start from beginning to catch existing content
       console.log(`Starting from position: ${lastLogPosition}`);
     })
     .catch(err => {
@@ -481,9 +491,9 @@ function startLiveLogMonitoring(logDirectory) {
       lastLogPosition = 0;
     });
   
-  // Read new content immediately, then every 60 seconds
+  // Read new content immediately, then every 5 seconds
   setImmediate(() => readNewLogContent(playerLogPath));
-  liveLogMonitor = setInterval(() => readNewLogContent(playerLogPath), 60000);
+  liveLogMonitor = setInterval(() => readNewLogContent(playerLogPath), 5000);
 }
 
 function stopLiveLogMonitoring() {
@@ -492,6 +502,10 @@ function stopLiveLogMonitoring() {
     liveLogMonitor = null;
     lastLogPosition = 0;
     console.log('Live log monitoring stopped');
+    
+    if (mainWindow) {
+      mainWindow.webContents.send('live-monitoring-stopped');
+    }
   }
 }
 

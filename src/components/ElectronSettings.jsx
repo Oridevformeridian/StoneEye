@@ -37,18 +37,10 @@ const ElectronSettings = ({ onImportLog, onLiveLogUpdate }) => {
                 loadReportExports();
             });
             
-            const unsubscribeLiveLog = window.electron.onLiveLogUpdate?.(async (data) => {
-                console.log('Live log update received:', data.content.length, 'bytes');
-                if (onLiveLogUpdate) {
-                    onLiveLogUpdate(data.content);
-                }
-            });
-            
             return () => {
                 unsubscribe();
                 unsubscribeAutoLog?.();
                 unsubscribeAutoExports?.();
-                unsubscribeLiveLog?.();
             };
         }
     }, []);

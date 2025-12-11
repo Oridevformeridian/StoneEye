@@ -47,6 +47,21 @@ export default function IngestView({ onIngestComplete, autoStart }) {
         if (persistedLogs.length > 0) {
             setLogs(persistedLogs);
         }
+
+        // Listen for global log monitor events
+        const handleMonitorEvent = (e) => {
+            if (e.detail && e.detail.message) {
+                // Message is already timestamped and persisted by useLogMonitor
+                // Just update local state to show it immediately
+                setLogs(prev => [e.detail.message, ...prev]);
+            }
+        };
+        
+        window.addEventListener('log-monitor-event', handleMonitorEvent);
+        
+        return () => {
+            window.removeEventListener('log-monitor-event', handleMonitorEvent);
+        };
     }, []);
 
     const processJson = async (filename, jsonData) => {
@@ -560,89 +575,6 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                     <div>
                         <h3 className="text-lg font-medium text-white mb-3">Desktop Auto-Watch</h3>
                         <ElectronSettings 
-                            onLiveLogUpdate={async (content) => {
-                                // Parse the new log content incrementally
-                                const parseResult = parseLogContent(content);
-                                const parsed = parseResult.vendors || [];
-                                const transactions = parseResult.transactions || [];
-                                
-                                if (parsed.length === 0 && transactions.length === 0) {
-                                    return; // Nothing to update
-                                }
-                                
-                                addLog(`Live update: ${parsed.length} vendors, ${transactions.length} transactions`);
-                                
-                                // Show toast notification for background updates
-                                const notificationParts = [];
-                                if (parsed.length > 0) notificationParts.push(`${parsed.length} vendor${parsed.length > 1 ? 's' : ''}`);
-                                if (transactions.length > 0) notificationParts.push(`${transactions.length} transaction${transactions.length > 1 ? 's' : ''}`);
-                                
-                                if (window.showToast) {
-                                    window.showToast(`Live update: ${notificationParts.join(', ')}`, 'success');
-                                }
-                                
-                                // Update vendors in database (only newer entries)
-                                if (parsed.length > 0) {
-                                    const entriesToUpdate = [];
-                                    
-                                    for (const p of parsed) {
-                                        const character = p.character;
-                                        const entryId = character ? `${character}_${p.id}_${p.npc}` : `${p.id}_${p.npc}`;
-                                        const name = p.npc || (`vendor_${p.id}`);
-                                        const refs = [];
-                                        if (character) refs.push(`character:${character}`);
-                                        if (p.npc) refs.push(`npc:${p.npc}`, `vendor:${p.npc}`);
-                                        
-                                        const newTimestamp = p.timestampMs || 0;
-                                        
-                                        // Check if we already have this vendor
-                                        const existing = await db.objects.get({ type: 'vendors', id: entryId });
-                                        
-                                        if (!existing || !existing.lastUpdated || newTimestamp >= existing.lastUpdated) {
-                                            entriesToUpdate.push({
-                                                type: 'vendors',
-                                                id: entryId,
-                                                name,
-                                                data: { ...p, character },
-                                                refs,
-                                                category: 'vendor',
-                                                lastUpdated: newTimestamp
-                                            });
-                                        }
-                                    }
-                                    
-                                    if (entriesToUpdate.length > 0) {
-                                        await db.objects.bulkPut(entriesToUpdate);
-                                        addLog(`Updated ${entriesToUpdate.length} vendors from live log`);
-                                    }
-                                }
-                                
-                                // Store transactions
-                                if (transactions.length > 0) {
-                                    const transactionEntries = transactions.map((t, idx) => {
-                                        const refs = [`character:${t.character}`, `npc:${t.npc}`];
-                                        return {
-                                            type: 'transactions',
-                                            id: `${t.character}_${t.timestamp}_${t.npcId}_${idx}_${Date.now()}`, // Add timestamp to ensure uniqueness
-                                            name: `Sale to ${t.npc}`,
-                                            data: t,
-                                            refs,
-                                            category: 'transaction'
-                                        };
-                                    });
-                                    await db.objects.bulkPut(transactionEntries);
-                                    addLog(`Recorded ${transactionEntries.length} new transactions`);
-                                    
-                                    // Show toast for transactions specifically
-                                    if (window.showToast) {
-                                        const totalGold = transactions.reduce((sum, t) => sum + (t.amount || 0), 0);
-                                        window.showToast(`💰 ${transactionEntries.length} sale${transactionEntries.length > 1 ? 's' : ''} recorded (${totalGold.toLocaleString()}g)`, 'success');
-                                    }
-                                }
-                                
-                                // Trigger UI refresh by dispatching custom event
-                                window.dispatchEvent(new CustomEvent('vendorDataUpdated'));
-                            }}
                             onImportLog={async (file) => {
                             setLoading(true);
                             setStatus('Processing archived log');
@@ -654,7 +586,7 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                                 const logEntries = parseResult.logEntries || [];
                                 
                                 setParsedLogs([{ file: file.name, parsed, transactions }]);
-                                addLog(`Parsed ${file.name}: ${parsed.length} entries, ${transactions.length} transactions, ${logEntries.length} log entries`);
+                                addLog(`[DEDUP] Parsed ${file.name}: ${parsed.length} entries, ${transactions.length} transactions, ${logEntries.length} log entries`);
 
                                 if (parsed && parsed.length > 0) {
                                     const charactersInLog = new Set();
@@ -669,25 +601,40 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                                 const existingEntries = new Set();
                                 if (logEntries.length > 0) {
                                     const compositeKeys = logEntries.map(e => [e.filename, e.lineNumber, e.timestamp]);
+                                    addLog(`[DEDUP] Checking ${compositeKeys.length} composite keys`);
+                                    if (compositeKeys.length > 0) {
+                                        addLog(`[DEDUP] Sample key: [${compositeKeys[0].join(', ')}]`);
+                                    }
+                                    
                                     const existing = await db.logEntries.where('[filename+lineNumber+timestamp]').anyOf(compositeKeys).toArray();
                                     existing.forEach(e => existingEntries.add(`${e.filename}+${e.lineNumber}+${e.timestamp}`));
-                                    addLog(`Found ${existing.length} existing log entries out of ${logEntries.length} total`);
+                                    addLog(`[DEDUP] Found ${existing.length} existing log entries out of ${logEntries.length} total`);
+                                    
+                                    if (existing.length > 0) {
+                                        addLog(`[DEDUP] Sample existing: line ${existing[0].lineNumber}, timestamp ${existing[0].timestamp}`);
+                                    }
                                 }
                                 
                                 // Filter to only new log entries
                                 const newLogEntries = logEntries.filter(e => {
                                     const key = `${e.filename}+${e.lineNumber}+${e.timestamp}`;
                                     return !existingEntries.has(key);
-                                });                                    if (newLogEntries.length < logEntries.length) {
-                                        skippedDuplicates = logEntries.length - newLogEntries.length;
-                                        addLog(`Skipping ${skippedDuplicates} duplicate log entries`);
-                                    }
-                                    
-                                    // Store new log entries
+                                });
+                                
+                                if (newLogEntries.length < logEntries.length) {
+                                    skippedDuplicates = logEntries.length - newLogEntries.length;
+                                    addLog(`⚠️ Skipping ${skippedDuplicates} duplicate log entries`);
+                                }
+                                
+                                // Store new log entries
+                                if (newLogEntries.length > 0) {
+                                    await db.logEntries.bulkPut(newLogEntries);
+                                    addLog(`[DEDUP] ✓ Stored ${newLogEntries.length} new log entries`);
                                     if (newLogEntries.length > 0) {
-                                        await db.logEntries.bulkPut(newLogEntries);
-                                        addLog(`Stored ${newLogEntries.length} new log entries`);
+                                        const sample = newLogEntries[0];
+                                        addLog(`[DEDUP] Sample stored: filename=${sample.filename}, line=${sample.lineNumber}, timestamp=${sample.timestamp}`);
                                     }
+                                }
                                     
                                     charactersInLog.forEach(charName => {
                                         const charKey = `gorgon_character_${charName}`;

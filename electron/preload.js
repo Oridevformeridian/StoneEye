@@ -43,5 +43,15 @@ contextBridge.exposeInMainWorld('electron', {
     const subscription = (event, data) => callback(data);
     ipcRenderer.on('live-monitoring-started', subscription);
     return () => ipcRenderer.removeListener('live-monitoring-started', subscription);
+  },
+  onLiveMonitoringStopped: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('live-monitoring-stopped', subscription);
+    return () => ipcRenderer.removeListener('live-monitoring-stopped', subscription);
+  },
+  onLogMonitorMessage: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('log-monitor-message', subscription);
+    return () => ipcRenderer.removeListener('log-monitor-message', subscription);
   }
 });

@@ -63,88 +63,37 @@ const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
         let skippedDuplicates = 0;
         
         try {
+            const logIngestion = (await import('../services/logIngestion')).default;
+            
             for (const file of files) {
-                const parseResult = await parseLogFileObject(file);
-                const parsed = parseResult.vendors || parseResult; // Handle both old and new format
-                const transactions = parseResult.transactions || [];
-                const logEntries = parseResult.logEntries || [];
+                const content = await file.text();
                 
-                console.log(`Processing ${file.name}: ${logEntries.length} log entries, ${parsed.length} vendors, ${transactions.length} transactions`);
+                console.log(`[UPLOAD] Processing ${file.name}`);
                 
-                // Check for existing log entries to prevent duplicates
-                const existingEntries = new Set();
-                if (logEntries.length > 0) {
-                    const compositeKeys = logEntries.map(e => [e.filename, e.lineNumber, e.timestamp]);
-                    const existing = await db.logEntries.where('[filename+lineNumber+timestamp]').anyOf(compositeKeys).toArray();
-                    existing.forEach(e => existingEntries.add(`${e.filename}+${e.lineNumber}+${e.timestamp}`));
-                    console.log(`Found ${existing.length} existing log entries out of ${logEntries.length} total`);
-                }
-                
-                // Filter log entries to only new ones
-                const newLogEntries = logEntries.filter(e => {
-                    const key = `${e.filename}+${e.lineNumber}+${e.timestamp}`;
-                    return !existingEntries.has(key);
+                const result = await logIngestion.processLogContent(content, {
+                    filename: file.name,
+                    isIncremental: false,
+                    skipDeduplication: false
                 });
                 
-                if (newLogEntries.length < logEntries.length) {
-                    skippedDuplicates += (logEntries.length - newLogEntries.length);
-                    console.log(`Skipping ${logEntries.length - newLogEntries.length} duplicate log entries`);
+                if (result.success) {
+                    totalEntries += result.processed.vendors;
+                    totalTransactions += result.processed.transactions;
+                    skippedDuplicates += result.skipped.duplicates;
+                    filesProcessed++;
                 }
-                
-                // Store new log entries in database
-                if (newLogEntries.length > 0) {
-                    await db.logEntries.bulkPut(newLogEntries);
-                    console.log(`Stored ${newLogEntries.length} new log entries`);
-                }
-                
-                // Only process vendors/transactions if we have new log entries
-                if (newLogEntries.length === 0 && logEntries.length > 0) {
-                    console.log(`All log entries already processed - skipping ${file.name}`);
-                } else if (parsed && parsed.length > 0) {
-                    const entries = parsed.map(p => {
-                        const entryId = `${selectedCharId}_${p.id}_${p.npc}`;
-                        const name = p.npc || (`vendor_${p.id}`);
-                        const refs = [];
-                        refs.push(`character:${selectedCharId}`);
-                        if (p.npc) refs.push(`npc:${p.npc}`);
-                        if (p.npc) refs.push(`vendor:${p.npc}`);
-                        return {
-                            type: 'vendors',
-                            id: entryId,
-                            name,
-                            data: { ...p, character: selectedCharId },
-                            refs,
-                            category: 'vendor'
-                        };
-                    });
-                    await db.objects.bulkPut(entries);
-                    totalEntries += entries.length;
-                    
-                    // Store transactions
-                    if (transactions && transactions.length > 0) {
-                        const transactionEntries = transactions.map((t, idx) => {
-                            const refs = [`character:${t.character}`, `npc:${t.npc}`];
-                            console.log(`Storing transaction: character=${t.character}, npc=${t.npc}, refs=`, refs);
-                            return {
-                                type: 'transactions',
-                                id: `${t.character}_${t.timestamp}_${t.npcId}_${idx}`, // Add index to make unique
-                                name: `Sale to ${t.npc}`,
-                                data: t,
-                                refs,
-                                category: 'transaction'
-                            };
-                        });
-                        await db.objects.bulkPut(transactionEntries);
-                        totalTransactions += transactionEntries.length;
-                    }
-                }
-                
-                filesProcessed++;
             }
             
             // Reload vendor data after import
             if (filesProcessed > 0) {
-                console.log(`Imported ${totalEntries} vendor entries and ${totalTransactions} transactions from ${filesProcessed} file(s)${skippedDuplicates > 0 ? ` (skipped ${skippedDuplicates} duplicates)` : ''}`);
+                const message = `Imported ${totalEntries} vendor entries and ${totalTransactions} transactions from ${filesProcessed} file(s)${skippedDuplicates > 0 ? ` (skipped ${skippedDuplicates} duplicates)` : ''}`;
+                console.log(`[UPLOAD] ✓ ${message}`);
+                
+                // Show toast if duplicates were skipped
+                if (skippedDuplicates > 0 && window.showToast) {
+                    window.showToast(`⚠️ Skipped ${skippedDuplicates} duplicate log entries`, 'info');
+                }
+                
                 // Force vendor data reload
                 setVendorRefresh(prev => prev + 1);
             }
@@ -708,28 +657,25 @@ const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
                     setVendorData([]);
                 }
                 
-                // Load transaction history for sales chart
+                // Load transaction history for sales chart using logIngestion service
                 if (selectedCharId) {
-                    const allTransactions = await db.objects.where('type').equals('transactions').toArray();
-                    console.log(`Found ${allTransactions.length} total transactions in database`);
-                    console.log(`Looking for transactions with character:${selectedCharId}`);
-                    console.log(`First few transaction refs:`, allTransactions.slice(0, 5).map(t => ({ refs: t.refs, data: t.data })));
+                    const logIngestion = (await import('../services/logIngestion')).default;
+                    const summary = await logIngestion.getTransactionSummary(selectedCharId);
                     
-                    const charTransactions = allTransactions.filter(t => t.refs && t.refs.includes(`character:${selectedCharId}`));
-                    console.log(`Found ${charTransactions.length} transactions for character ${selectedCharId}`);
+                    console.log(`Found ${summary.totalCount} transactions for character ${selectedCharId}`);
+                    console.log(`Total sales: ${summary.totalAmount.toLocaleString()}g`);
                     
-                    setAllTransactions(charTransactions);
-                    
+                    setAllTransactions(summary.transactions);
                     // Group by date and sum sales
                     const dailySales = {};
-                    charTransactions.forEach(t => {
-                        const date = t.data.date;
-                        console.log(`Transaction: date=${date}, amount=${t.data.amount}, npc=${t.data.npc}`);
-                        if (date) {
-                            dailySales[date] = (dailySales[date] || 0) + t.data.amount;
-                        }
+                    summary.transactions.forEach(t => {
+                        // Support both old (timestamp) and new (timestampUTC) formats
+                        const timestamp = t.data.timestampUTC || t.data.timestamp;
+                        const date = new Date(timestamp);
+                        // Get local date string using browser's timezone
+                        const dateStr = date.toLocaleDateString('en-CA'); // YYYY-MM-DD format
+                        dailySales[dateStr] = (dailySales[dateStr] || 0) + t.data.amount;
                     });
-                    
                     console.log('Daily sales totals:', dailySales);
                     
                     // Create array of last 7 days
@@ -1782,17 +1728,25 @@ const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
                             <tbody className="divide-y divide-slate-700/50">
                                 {(() => {
                                     const filtered = ledgerDate 
-                                        ? allTransactions.filter(t => t.data.date === ledgerDate)
+                                        ? allTransactions.filter(t => {
+                                            // Support both old (timestamp) and new (timestampUTC) formats
+                                            const timestamp = t.data.timestampUTC || t.data.timestamp;
+                                            if (!timestamp) return false;
+                                            
+                                            const date = new Date(timestamp);
+                                            const localDateStr = date.toLocaleDateString('en-CA'); // YYYY-MM-DD format
+                                            return localDateStr === ledgerDate;
+                                        })
                                         : allTransactions;
                                     
                                     const sorted = [...filtered].sort((a, b) => {
                                         let compareResult = 0;
                                         
                                         if (ledgerSort.key === 'timestamp') {
-                                            // Create sortable datetime from date and time strings
-                                            const dateTimeA = `${a.data.date} ${a.data.time || '00:00:00'}`;
-                                            const dateTimeB = `${b.data.date} ${b.data.time || '00:00:00'}`;
-                                            compareResult = dateTimeA.localeCompare(dateTimeB);
+                                            // Support both old and new timestamp formats
+                                            const timeA = new Date(a.data.timestampUTC || a.data.timestamp).getTime();
+                                            const timeB = new Date(b.data.timestampUTC || b.data.timestamp).getTime();
+                                            compareResult = timeA - timeB;
                                         } else if (ledgerSort.key === 'vendor') {
                                             const vendorA = (a.data.npc || '').replace('NPC_', '');
                                             const vendorB = (b.data.npc || '').replace('NPC_', '');
@@ -1815,10 +1769,20 @@ const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
                                     }
                                     
                                     return sorted.map((tx, idx) => {
-                                        const dateObj = new Date(tx.data.date);
-                                        const dateStr = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                                        const timeStr = tx.data.time || '';
-                                        const dateTime = `${dateStr} ${timeStr}`;
+                                        // Support both old (timestamp) and new (timestampUTC) formats
+                                        const timestamp = tx.data.timestampUTC || tx.data.timestamp;
+                                        const date = new Date(timestamp);
+                                        
+                                        // Let JavaScript handle timezone conversion automatically
+                                        const dateTime = date.toLocaleString('en-US', {
+                                            month: 'short',
+                                            day: 'numeric',
+                                            year: 'numeric',
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                            second: '2-digit',
+                                            hour12: false
+                                        });
                                         
                                         return (
                                             <tr key={tx.id} className="hover:bg-slate-700/30 transition-colors">
