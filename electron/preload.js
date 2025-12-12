@@ -39,9 +39,23 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.on('live-log-update', subscription);
     return () => ipcRenderer.removeListener('live-log-update', subscription);
   },
+  onLiveLogInitialContext: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('live-log-initial-context', subscription);
+    return () => ipcRenderer.removeListener('live-log-initial-context', subscription);
+  },
   onLiveMonitoringStarted: (callback) => {
     const subscription = (event, data) => callback(data);
     ipcRenderer.on('live-monitoring-started', subscription);
     return () => ipcRenderer.removeListener('live-monitoring-started', subscription);
-  }
+  },
+  
+  // Event notifications
+  setEventNotification: (eventId, enabled) => ipcRenderer.invoke('set-event-notification', eventId, enabled),
+  getEventNotifications: () => ipcRenderer.invoke('get-event-notifications'),
+  
+  // Vendor notifications
+  setVendorNotificationsEnabled: (enabled) => ipcRenderer.invoke('set-vendor-notifications-enabled', enabled),
+  getVendorNotificationsEnabled: () => ipcRenderer.invoke('get-vendor-notifications-enabled'),
+  updateVendorTimers: (timers) => ipcRenderer.invoke('update-vendor-timers', timers)
 });

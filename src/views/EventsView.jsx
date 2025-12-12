@@ -96,7 +96,7 @@ const calculateCountdown = (eventHour, eventMinute) => {
 
 const EventsView = ({ goBack }) => {
   const [state, setState] = useState(() => loadState());
-  const [permission, setPermission] = useState(Notification.permission || 'default');
+  const [permission, setPermission] = useState('granted'); // Electron handles permissions
   const [countdowns, setCountdowns] = useState(() => {
     const cd = {};
     EVENT_DEFS.forEach(ev => {
@@ -112,15 +112,30 @@ const EventsView = ({ goBack }) => {
   const [qatikZone, setQatikZone] = useState(() => getQatikZoneInfo().currentZone);
   const timerRef = useRef(null);
 
+  // Load settings from Electron if available
   useEffect(() => {
-    // Persist changes
+    if (window.electron?.getEventNotifications) {
+      window.electron.getEventNotifications().then(settings => {
+        setState(prev => ({ ...prev, enabled: settings }));
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    // Persist changes to localStorage
     saveState(state);
+    
+    // Sync to Electron background service
+    if (window.electron?.setEventNotification) {
+      Object.entries(state.enabled).forEach(([eventId, enabled]) => {
+        window.electron.setEventNotification(eventId, enabled);
+      });
+    }
   }, [state]);
 
   useEffect(() => {
-    // Update countdowns every second and check for notifications every minute
-    const tick = async () => {
-      // Update countdowns
+    // Update countdowns every second (just for display, notifications handled by Electron)
+    const tick = () => {
       const newCountdowns = {};
       EVENT_DEFS.forEach(ev => {
         if (ev.isDaily) {
@@ -132,84 +147,14 @@ const EventsView = ({ goBack }) => {
         }
       });
       setCountdowns(newCountdowns);
-
-      // Check for notifications (every minute, on the minute)
-      const parts = NY_NOW_PARTS();
-      if (parts.second === 0) {
-        const todayKey = `${parts.year}-${String(parts.month).padStart(2,'0')}-${String(parts.day).padStart(2,'0')}`;
-
-        for (const ev of EVENT_DEFS) {
-          if (!state.enabled[ev.id]) continue;
-
-          let shouldNotify = false;
-          let notificationTitle = '';
-          let notificationBody = '';
-
-          if (ev.isDaily) {
-            // Qatik Daily: notify at midnight (00:00 EST)
-            if (parts.hour === 0 && parts.minute === 0) {
-              const last = state.lastNotified && state.lastNotified[ev.id];
-              if (last !== todayKey) {
-                shouldNotify = true;
-                const qatik = getQatikZoneInfo();
-                notificationTitle = `${ev.label}: ${qatik.currentZone}`;
-                notificationBody = `Zone for today is ${qatik.currentZone}`;
-              }
-            }
-          } else {
-            // Eggs: notify 5 minutes before
-            const targetHour = ev.hour;
-            const targetMinute = ev.minute - 5;
-            if (targetMinute < 0) continue;
-            
-            if (parts.hour === targetHour && parts.minute === targetMinute) {
-              const last = state.lastNotified && state.lastNotified[ev.id];
-              if (last !== todayKey) {
-                shouldNotify = true;
-                notificationTitle = `${ev.label} in 5 minutes`;
-                notificationBody = `${ev.label} starts at ${String(ev.hour).padStart(2,'0')}:${String(ev.minute).padStart(2,'0')} Eastern`;
-              }
-            }
-          }
-
-          if (shouldNotify) {
-            if (Notification.permission !== 'granted') {
-              const granted = await requestNotificationPermission();
-              setPermission(granted ? 'granted' : Notification.permission);
-              if (!granted) continue;
-            }
-
-            try {
-              new Notification(notificationTitle, { body: notificationBody });
-            } catch (err) {
-              console.warn('Notification failed', err);
-            }
-
-            setState(prev => ({
-              ...prev,
-              lastNotified: { ...(prev.lastNotified || {}), [ev.id]: todayKey }
-            }));
-          }
-        }
-      }
     };
 
     timerRef.current = setInterval(tick, 1000);
     tick();
     return () => clearInterval(timerRef.current);
-  }, [state.enabled]);
+  }, []);
 
-  const toggle = async (id) => {
-    // If enabling and permission not granted yet, request on first enable
-    if (!state.enabled[id] && Notification && Notification.permission !== 'granted') {
-      const granted = await requestNotificationPermission();
-      setPermission(granted ? 'granted' : Notification.permission);
-      if (!granted) {
-        // user denied; do not enable
-        setState(prev => ({ ...prev, enabled: { ...prev.enabled, [id]: false } }));
-        return;
-      }
-    }
+  const toggle = (id) => {
     setState(prev => ({ ...prev, enabled: { ...prev.enabled, [id]: !prev.enabled[id] } }));
   };
 

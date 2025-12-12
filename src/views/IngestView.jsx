@@ -3,7 +3,9 @@ import { db } from '../db/index.js';
 import { KNOWN_FILES } from '../constants/index.js';
 import Icon from '../components/Icon.jsx';
 import LoadingBar from '../components/LoadingBar.jsx';
-import { parseLogFileObject, parseLogContent } from '../utils/logParser.js';
+import { parseLogFileObject } from '../utils/logParser.js';
+import parseAndStoreLog from '../utils/unifiedLogParser.js';
+import LogService from '../services/logService.js';
 import ElectronSettings from '../components/ElectronSettings.jsx';
 
 export default function IngestView({ onIngestComplete, autoStart }) {
@@ -263,144 +265,57 @@ export default function IngestView({ onIngestComplete, autoStart }) {
         const files = Array.from(e.target.files || []);
         if (files.length === 0) return;
         setLoading(true);
-        setStatus('Parsing logs');
-        const allParsed = [];
+        setStatus('Parsing logs with unified log system');
+        
+        let totalWritten = 0;
+        let totalSkipped = 0;
+        const charactersSeen = new Set();
+        
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
             setCurrentFile(file.name);
+            setProgress((i / files.length) * 100);
+            
             try {
-                const parseResult = await parseLogFileObject(file);
-                const parsed = parseResult.vendors || parseResult; // Handle both old and new format
-                const transactions = parseResult.transactions || [];
+                let content;
                 
-                allParsed.push({ file: file.name, parsed, transactions });
-                addLog(`Parsed ${file.name}: ${parsed.length} entries, ${transactions.length} transactions`);
-
-                // If we have parsed entries, ingest them into the DB
-                if (parsed && parsed.length > 0) {
-                    // Collect unique characters from the log
-                    const charactersInLog = new Set();
-                    parsed.forEach(p => {
-                        if (p.character) {
-                            charactersInLog.add(p.character);
-                        }
-                    });
-                    
-                    addLog(`Found ${charactersInLog.size} characters: ${Array.from(charactersInLog).join(', ')}`);
-                    
-                    // Ensure minimal character records exist for each character
-                    charactersInLog.forEach(charName => {
-                        const charKey = `gorgon_character_${charName}`;
-                        const invKey = `gorgon_inventory_${charName}`;
-                        
-                        if (!localStorage.getItem(charKey)) {
-                            // Create minimal character record matching real export structure (with data wrapper)
-                            const minimalChar = {
-                                data: {
-                                    Name: charName,
-                                    Currencies: { GOLD: 0 },
-                                    CurrentStats: { MAX_HEALTH: 0, MAX_POWER: 0, MAX_ARMOR: 0 },
-                                    ActiveQuests: [],
-                                    NpcFavor: {},
-                                    Skills: {}
-                                }
-                            };
-                            localStorage.setItem(charKey, JSON.stringify(minimalChar));
-                            addLog(`Created minimal character record for ${charName}`);
-                        }
-                        
-                        if (!localStorage.getItem(invKey)) {
-                            // Create minimal inventory stub matching real export structure (with data wrapper)
-                            const minimalInv = {
-                                data: {
-                                    Inventory: {},
-                                    StorageVaults: {}
-                                }
-                            };
-                            localStorage.setItem(invKey, JSON.stringify(minimalInv));
-                            addLog(`Created minimal inventory record for ${charName}`);
-                        }
-                    });
-                    
-                    // Check timestamps and only update if data is newer
-                    const entriesToUpdate = [];
-                    let skippedStale = 0;
-                    
-                    for (const p of parsed) {
-                        const character = p.character;
-                        if (!character) {
-                            console.warn('Entry without character context:', p);
-                        }
-                        
-                        const entryId = character ? `${character}_${p.id}_${p.npc}` : `${p.id}_${p.npc}`;
-                        const name = p.npc || (`vendor_${p.id}`);
-                        const refs = [];
-                        if (character) refs.push(`character:${character}`);
-                        if (p.npc) refs.push(`npc:${p.npc}`);
-                        if (p.npc) refs.push(`vendor:${p.npc}`);
-                        
-                        const newTimestamp = p.timestampMs || 0;
-                        
-                        // Check if we already have this vendor
-                        const existing = await db.objects.get({ type: 'vendors', id: entryId });
-                        
-                        if (!existing || !existing.lastUpdated || newTimestamp >= existing.lastUpdated) {
-                            // New data is newer (or equal) - update it
-                            entriesToUpdate.push({
-                                type: 'vendors',
-                                id: entryId,
-                                name,
-                                data: { ...p, character },
-                                refs,
-                                category: 'vendor',
-                                lastUpdated: newTimestamp
-                            });
-                        } else {
-                            // Skip stale data
-                            skippedStale++;
-                        }
-                    }
-
-                    try {
-                        if (entriesToUpdate.length > 0) {
-                            await db.objects.bulkPut(entriesToUpdate);
-                            addLog(`✓ Ingested ${entriesToUpdate.length} vendor entries from ${file.name}`);
-                        }
-                        if (skippedStale > 0) {
-                            addLog(`⚠ Skipped ${skippedStale} stale vendor entries (newer data already exists)`);
-                        }
-                    } catch (err) {
-                        console.error('DB ingest error', err);
-                        addLog(`✗ DB ingest error for ${file.name}`);
-                    }
-                    
-                    // Store transactions
-                    if (transactions && transactions.length > 0) {
-                        const transactionEntries = transactions.map((t, idx) => ({
-                            type: 'transactions',
-                            id: `${t.character}_${t.timestamp}_${t.npcId}_${idx}`, // Add index to make unique
-                            name: `Sale to ${t.npc}`,
-                            data: t,
-                            refs: [`character:${t.character}`, `npc:${t.npc}`],
-                            category: 'transaction'
-                        }));
-                        
-                        try {
-                            await db.objects.bulkPut(transactionEntries);
-                            addLog(`Ingested ${transactionEntries.length} transactions from ${file.name}`);
-                        } catch (err) {
-                            console.error('Transaction ingest error', err);
-                            addLog(`Transaction ingest error for ${file.name}`);
-                        }
-                    }
+                // Check if file is gzipped
+                if (file.name.endsWith('.gz')) {
+                    // Decompress gzipped file
+                    const arrayBuffer = await file.arrayBuffer();
+                    const decompressedStream = new Response(
+                        new Blob([arrayBuffer]).stream().pipeThrough(new DecompressionStream('gzip'))
+                    );
+                    content = await decompressedStream.text();
+                } else {
+                    // Regular text file
+                    content = await file.text();
                 }
+                
+                const result = await parseAndStoreLog(content, file.name);
+                
+                totalWritten += result.entriesWritten;
+                totalSkipped += result.skippedDuplicates || 0;
+                if (result.character) charactersSeen.add(result.character);
+                
+                addLog(`✓ ${file.name}: ${result.entriesWritten} entries (${result.skippedDuplicates || 0} duplicates) for ${result.character}`);
             } catch (err) {
-                addLog(`Error parsing ${file.name}`);
+                addLog(`❌ Error parsing ${file.name}: ${err.message}`);
+                console.error('Parse error:', err);
             }
         }
-        setParsedLogs(allParsed);
-        setLoading(false);
+        
+        setProgress(100);
         setStatus('Complete');
+        setLoading(false);
+        setCurrentFile('');
+        addLog(`✅ Completed: ${totalWritten} entries written, ${totalSkipped} duplicates skipped`);
+        addLog(`📊 Characters: ${Array.from(charactersSeen).join(', ')}`);
+        
+        // Trigger callback if provided
+        if (onIngestComplete) {
+            onIngestComplete();
+        }
     };
 
     const handlePurge = () => {
@@ -440,10 +355,12 @@ export default function IngestView({ onIngestComplete, autoStart }) {
             }
             keysToRemove.forEach(k => localStorage.removeItem(k));
             
-            // Clear IndexedDB
+            // Clear ALL IndexedDB tables
             await db.objects.clear();
+            await db.logEntries.clear();
+            await db.logs.clear();
             
-            addLog(`Purged all data: ${keysToRemove.length} localStorage items and entire database.`);
+            addLog(`Purged all data: ${keysToRemove.length} localStorage items and entire database (objects, logs, logEntries).`);
             setConfirmPurgeAll(false);
         } catch (err) {
             addLog(`Error purging all data: ${err.message}`);
@@ -561,237 +478,81 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                         <h3 className="text-lg font-medium text-white mb-3">Desktop Auto-Watch</h3>
                         <ElectronSettings 
                             onLiveLogUpdate={async (content) => {
-                                // Parse the new log content incrementally
-                                const parseResult = parseLogContent(content);
-                                const parsed = parseResult.vendors || [];
-                                const transactions = parseResult.transactions || [];
-                                
-                                if (parsed.length === 0 && transactions.length === 0) {
-                                    return; // Nothing to update
-                                }
-                                
-                                addLog(`Live update: ${parsed.length} vendors, ${transactions.length} transactions`);
-                                
-                                // Show toast notification for background updates
-                                const notificationParts = [];
-                                if (parsed.length > 0) notificationParts.push(`${parsed.length} vendor${parsed.length > 1 ? 's' : ''}`);
-                                if (transactions.length > 0) notificationParts.push(`${transactions.length} transaction${transactions.length > 1 ? 's' : ''}`);
-                                
-                                if (window.showToast) {
-                                    window.showToast(`Live update: ${notificationParts.join(', ')}`, 'success');
-                                }
-                                
-                                // Update vendors in database (only newer entries)
-                                if (parsed.length > 0) {
-                                    const entriesToUpdate = [];
+                                // Parse the new log content with unified parser
+                                try {
+                                    console.log(`[LiveMonitor] Received ${content.length} bytes from electron`);
+                                    const result = await parseAndStoreLog(content, 'live-player.log');
                                     
-                                    for (const p of parsed) {
-                                        const character = p.character;
-                                        const entryId = character ? `${character}_${p.id}_${p.npc}` : `${p.id}_${p.npc}`;
-                                        const name = p.npc || (`vendor_${p.id}`);
-                                        const refs = [];
-                                        if (character) refs.push(`character:${character}`);
-                                        if (p.npc) refs.push(`npc:${p.npc}`, `vendor:${p.npc}`);
-                                        
-                                        const newTimestamp = p.timestampMs || 0;
-                                        
-                                        // Check if we already have this vendor
-                                        const existing = await db.objects.get({ type: 'vendors', id: entryId });
-                                        
-                                        if (!existing || !existing.lastUpdated || newTimestamp >= existing.lastUpdated) {
-                                            entriesToUpdate.push({
-                                                type: 'vendors',
-                                                id: entryId,
-                                                name,
-                                                data: { ...p, character },
-                                                refs,
-                                                category: 'vendor',
-                                                lastUpdated: newTimestamp
-                                            });
+                                    if (result.entriesWritten === 0) {
+                                        // Log when updates are checked but no new data
+                                        console.log(`[LiveMonitor] No new entries. Skipped ${result.skippedDuplicates || 0} duplicates`);
+                                        return; // Nothing new
+                                    }
+                                    
+                                    console.log(`[LiveMonitor] SUCCESS: ${result.entriesWritten} new entries for ${result.character}`);
+                                    addLog(`Live update: ${result.entriesWritten} entries for ${result.character}`);
+                                    
+                                    // Trigger global data refresh for all views
+                                    window.dispatchEvent(new CustomEvent('dataUpdated', {
+                                        detail: {
+                                            character: result.character,
+                                            entriesWritten: result.entriesWritten,
+                                            source: 'live-log'
                                         }
-                                    }
+                                    }));
                                     
-                                    if (entriesToUpdate.length > 0) {
-                                        await db.objects.bulkPut(entriesToUpdate);
-                                        addLog(`Updated ${entriesToUpdate.length} vendors from live log`);
-                                    }
-                                }
-                                
-                                // Store transactions
-                                if (transactions.length > 0) {
-                                    const transactionEntries = transactions.map((t, idx) => {
-                                        const refs = [`character:${t.character}`, `npc:${t.npc}`];
-                                        return {
-                                            type: 'transactions',
-                                            id: `${t.character}_${t.timestamp}_${t.npcId}_${idx}_${Date.now()}`, // Add timestamp to ensure uniqueness
-                                            name: `Sale to ${t.npc}`,
-                                            data: t,
-                                            refs,
-                                            category: 'transaction'
-                                        };
-                                    });
-                                    await db.objects.bulkPut(transactionEntries);
-                                    addLog(`Recorded ${transactionEntries.length} new transactions`);
-                                    
-                                    // Show toast for transactions specifically
+                                    // Show toast notification for background updates
                                     if (window.showToast) {
-                                        const totalGold = transactions.reduce((sum, t) => sum + (t.amount || 0), 0);
-                                        window.showToast(`💰 ${transactionEntries.length} sale${transactionEntries.length > 1 ? 's' : ''} recorded (${totalGold.toLocaleString()}g)`, 'success');
+                                        window.showToast(`Live update: ${result.entriesWritten} entries`, 'success');
                                     }
+                                } catch (err) {
+                                    console.error('[LiveMonitor] ERROR:', err);
+                                    addLog(`❌ Live update error: ${err.message}`);
                                 }
-                                
-                                // Trigger UI refresh by dispatching custom event
-                                window.dispatchEvent(new CustomEvent('vendorDataUpdated'));
+                            }}
+                            onArchivedLogImport={async (content, filename) => {
+                                // Parse archived log with unified parser
+                                try {
+                                    setLoading(true);
+                                    setStatus(`Processing archived log: ${filename}`);
+                                    setCurrentFile(filename);
+                                    
+                                    const result = await parseAndStoreLog(content, filename);
+                                    
+                                    addLog(`✓ ${filename}: ${result.entriesWritten} entries (${result.skippedDuplicates || 0} duplicates) for ${result.character}`);
+                                    
+                                    setLoading(false);
+                                    setStatus('Complete');
+                                    setCurrentFile('');
+                                } catch (err) {
+                                    console.error('Archived log parse error:', err);
+                                    addLog(`❌ Error parsing ${filename}: ${err.message}`);
+                                    setLoading(false);
+                                    setStatus('Error');
+                                }
                             }}
                             onImportLog={async (file) => {
-                            setLoading(true);
-                            setStatus('Processing archived log');
-                            setCurrentFile(file.name);
-                            try {
-                                const parseResult = await parseLogFileObject(file);
-                                const parsed = parseResult.vendors || parseResult;
-                                const transactions = parseResult.transactions || [];
-                                const logEntries = parseResult.logEntries || [];
+                                // Use unified parser for archived log imports (supports .log and .log.gz)
+                                setLoading(true);
+                                setStatus('Processing archived log');
+                                setCurrentFile(file.name);
                                 
-                                setParsedLogs([{ file: file.name, parsed, transactions }]);
-                                addLog(`Parsed ${file.name}: ${parsed.length} entries, ${transactions.length} transactions, ${logEntries.length} log entries`);
-
-                                if (parsed && parsed.length > 0) {
-                                    const charactersInLog = new Set();
-                                    parsed.forEach(p => {
-                                        if (p.character) charactersInLog.add(p.character);
-                                    });
+                                try {
+                                    const content = await file.text();
+                                    const result = await parseAndStoreLog(content, file.name);
                                     
-                                    addLog(`Found ${charactersInLog.size} characters: ${Array.from(charactersInLog).join(', ')}`);
+                                    addLog(`✓ ${file.name}: ${result.entriesWritten} entries (${result.skippedDuplicates || 0} duplicates) for ${result.character}`);
                                     
-                                // Check for existing log entries to prevent duplicates
-                                let skippedDuplicates = 0;
-                                const existingEntries = new Set();
-                                if (logEntries.length > 0) {
-                                    const compositeKeys = logEntries.map(e => [e.filename, e.lineNumber, e.timestamp]);
-                                    const existing = await db.logEntries.where('[filename+lineNumber+timestamp]').anyOf(compositeKeys).toArray();
-                                    existing.forEach(e => existingEntries.add(`${e.filename}+${e.lineNumber}+${e.timestamp}`));
-                                    addLog(`Found ${existing.length} existing log entries out of ${logEntries.length} total`);
+                                    setLoading(false);
+                                    setStatus('Complete');
+                                    setCurrentFile('');
+                                } catch (err) {
+                                    console.error('Archived log parse error:', err);
+                                    addLog(`❌ Error parsing ${file.name}: ${err.message}`);
+                                    setLoading(false);
+                                    setStatus('Error');
                                 }
-                                
-                                // Filter to only new log entries
-                                const newLogEntries = logEntries.filter(e => {
-                                    const key = `${e.filename}+${e.lineNumber}+${e.timestamp}`;
-                                    return !existingEntries.has(key);
-                                });                                    if (newLogEntries.length < logEntries.length) {
-                                        skippedDuplicates = logEntries.length - newLogEntries.length;
-                                        addLog(`Skipping ${skippedDuplicates} duplicate log entries`);
-                                    }
-                                    
-                                    // Store new log entries
-                                    if (newLogEntries.length > 0) {
-                                        await db.logEntries.bulkPut(newLogEntries);
-                                        addLog(`Stored ${newLogEntries.length} new log entries`);
-                                    }
-                                    
-                                    charactersInLog.forEach(charName => {
-                                        const charKey = `gorgon_character_${charName}`;
-                                        const invKey = `gorgon_inventory_${charName}`;
-                                        
-                                        if (!localStorage.getItem(charKey)) {
-                                            const minimalChar = {
-                                                data: {
-                                                    Name: charName,
-                                                    Currencies: { GOLD: 0 },
-                                                    CurrentStats: { MAX_HEALTH: 0, MAX_POWER: 0, MAX_ARMOR: 0 },
-                                                    ActiveQuests: [],
-                                                    NpcFavor: {},
-                                                    Skills: {}
-                                                }
-                                            };
-                                            localStorage.setItem(charKey, JSON.stringify(minimalChar));
-                                            addLog(`Created minimal character record for ${charName}`);
-                                        }
-                                        
-                                        if (!localStorage.getItem(invKey)) {
-                                            const minimalInv = {
-                                                data: {
-                                                    Inventory: {},
-                                                    StorageVaults: {}
-                                                }
-                                            };
-                                            localStorage.setItem(invKey, JSON.stringify(minimalInv));
-                                            addLog(`Created minimal inventory record for ${charName}`);
-                                        }
-                                    });
-                                    
-                                    // Only process vendors/transactions if we have new log entries
-                                    // (Skip if all log entries were already processed)
-                                    if (newLogEntries.length === 0 && logEntries.length > 0) {
-                                        addLog(`✓ All log entries already processed - skipping vendor/transaction import`);
-                                    } else {
-                                        // Check timestamps and only update if data is newer
-                                        const entriesToUpdate = [];
-                                        let skippedStale = 0;
-                                        
-                                        for (const p of parsed) {
-                                            const character = p.character;
-                                            const entryId = character ? `${character}_${p.id}_${p.npc}` : `${p.id}_${p.npc}`;
-                                            const name = p.npc || (`vendor_${p.id}`);
-                                            const refs = [];
-                                            if (character) refs.push(`character:${character}`);
-                                            if (p.npc) refs.push(`npc:${p.npc}`, `vendor:${p.npc}`);
-                                            
-                                            const newTimestamp = p.timestampMs || 0;
-                                            
-                                            // Check if we already have this vendor
-                                            const existing = await db.objects.get({ type: 'vendors', id: entryId });
-                                        
-                                        if (!existing || !existing.lastUpdated || newTimestamp >= existing.lastUpdated) {
-                                            // New data is newer (or equal) - update it
-                                            entriesToUpdate.push({
-                                                type: 'vendors',
-                                                id: entryId,
-                                                name,
-                                                data: { ...p, character },
-                                                refs,
-                                                category: 'vendor',
-                                                lastUpdated: newTimestamp
-                                            });
-                                        } else {
-                                            // Skip stale data
-                                            skippedStale++;
-                                        }
-                                    }
-
-                                    if (entriesToUpdate.length > 0) {
-                                        await db.objects.bulkPut(entriesToUpdate);
-                                        addLog(`✓ Ingested ${entriesToUpdate.length} vendor entries from ${file.name}`);
-                                    }
-                                    if (skippedStale > 0) {
-                                        addLog(`⚠ Skipped ${skippedStale} stale vendor entries (newer data already exists)`);
-                                    }
-                                    
-                                    if (transactions && transactions.length > 0) {
-                                        const transactionEntries = transactions.map((t, idx) => ({
-                                            type: 'transactions',
-                                            id: `${t.character}_${t.timestamp}_${t.npcId}_${idx}`,
-                                            name: `Sale to ${t.npc}`,
-                                            data: t,
-                                            refs: [`character:${t.character}`, `npc:${t.npc}`],
-                                            category: 'transaction'
-                                        }));
-                                        
-                                        await db.objects.bulkPut(transactionEntries);
-                                        addLog(`Ingested ${transactionEntries.length} transactions from ${file.name}`);
-                                    }
-                                    }
-                                    
-                                    if (skippedDuplicates > 0) {
-                                        addLog(`✓ Deduplication: ${skippedDuplicates} log entries already imported`);
-                                    }
-                                }
-                            } catch (err) {
-                                addLog(`Error parsing ${file.name}: ${err.message}`);
-                            }
-                            setLoading(false);
-                            setStatus('Complete');
-                        }} />
+                            }} />
                     </div>
                 )}
                 
@@ -817,7 +578,7 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                                 <input 
                                     type="file" 
                                     multiple 
-                                    accept=".log,.txt,*" 
+                                    accept=".log,.log.gz,.gz,.txt,*" 
                                     onChange={handleLogUpload} 
                                     className="hidden" 
                                     id="log-upload" 
@@ -826,7 +587,7 @@ export default function IngestView({ onIngestComplete, autoStart }) {
                                     htmlFor="log-upload" 
                                     className="cursor-pointer text-sm text-slate-300 hover:text-white block"
                                 >
-                                    Click to upload player log files
+                                    Click to upload player log files (.log or .log.gz)
                                 </label>
                                 <div className="text-[10px] text-slate-500 mt-2">Automatically detects character from login events</div>
                             </div>
