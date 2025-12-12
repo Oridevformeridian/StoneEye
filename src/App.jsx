@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { db } from './db/index.js';
 import { KNOWN_FILES, CATEGORY_META, FAVOR_LEVELS, getCategoryMeta } from './constants/index.js';
 import Icon from './components/Icon.jsx';
+import ErrorBoundary from './components/ErrorBoundary.jsx';
 import stoneeyeIcon from './stoneeye-icon.png';
 import Badge from './components/Badge.jsx';
 import GameIcon from './components/GameIcon.jsx';
@@ -531,12 +532,13 @@ export default function App() {
     }
 
     return (
-        <div className="flex h-full font-sans flex-col md:flex-row">
-            {/* Desktop Sidebar */}
-            <div id="desktop-sidebar" className="hidden md:flex w-64 bg-slate-900 border-r border-slate-800 flex-col shrink-0">
-                <div className="p-6 border-b border-slate-800">
-                    <h1 className="text-xl font-bold text-indigo-400 flex items-center gap-2">
-                        <img src={stoneeyeIcon} alt="StoneEye" className="w-5 h-5" /> The Stone Eye
+        <ErrorBoundary>
+            <div className="flex h-full font-sans flex-col md:flex-row">
+                {/* Desktop Sidebar */}
+                <div id="desktop-sidebar" className="hidden md:flex w-64 bg-slate-900 border-r border-slate-800 flex-col shrink-0">
+                    <div className="p-6 border-b border-slate-800">
+                        <h1 className="text-xl font-bold text-indigo-400 flex items-center gap-2">
+                            <img src={stoneeyeIcon} alt="StoneEye" className="w-5 h-5" /> The Stone Eye
                     </h1>
                     <p className="text-xs text-slate-500 mt-2">Fantasy Matchmaker Service</p>
                 </div>
@@ -657,5 +659,6 @@ export default function App() {
                 ))}
             </div>
         </div>
+        </ErrorBoundary>
     );
 }
