@@ -12,7 +12,7 @@ const WikiButton = ({ type, name }) => {
             case 'skills': return `${baseUrl}/${cleanName}`;
             case 'abilities': return `${baseUrl}/Ability:${cleanName}`;
             case 'recipes': return `${baseUrl}/Recipe:${cleanName}`;
-            case 'npcs': return `${baseUrl}/NPC:${cleanName}`;
+            case 'npcs': return `${baseUrl}/${cleanName}`;
             default: return `${baseUrl}/${cleanName}`;
         }
     };

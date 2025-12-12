@@ -37,6 +37,22 @@ const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
     const [ledgerSort, setLedgerSort] = useState({ key: 'timestamp', direction: 'desc' });
     const [npcFilter, setNpcFilter] = useState('');
 
+    // Load vendor notification preference from Electron
+    useEffect(() => {
+        if (window.electron?.getVendorNotificationsEnabled) {
+            window.electron.getVendorNotificationsEnabled().then(enabled => {
+                setNotifyOnReset(enabled);
+            });
+        }
+    }, []);
+    
+    // Sync vendor notification preference to Electron
+    useEffect(() => {
+        if (window.electron?.setVendorNotificationsEnabled) {
+            window.electron.setVendorNotificationsEnabled(notifyOnReset);
+        }
+    }, [notifyOnReset]);
+
     const handleCharacterChange = (charId) => {
         setSelectedCharId(charId);
         setViewMode('cards'); // Reset to cards view when changing character
@@ -164,11 +180,33 @@ const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
         }
         if (!selectedCharId) return;
         try {
+            // Delete old vendor entries from objects table
             const vendorEntries = await db.objects.where('type').equals('vendors').toArray();
             const toPurge = vendorEntries.filter(e => e.data && e.data.character === selectedCharId);
             const ids = toPurge.map(e => [e.type, e.id]);
             await db.objects.bulkDelete(ids);
+            
+            // Delete vendor logs from unified logs table
+            const vendorLogs = await db.logs
+                .where('[epochSeconds+player]')
+                .between([0, selectedCharId], [Number.MAX_SAFE_INTEGER, selectedCharId], true, true)
+                .toArray();
+            const vendorLogIds = vendorLogs
+                .filter(log => log.actionContext === 'vendor_screen' || log.actionContext === 'vendor_transaction')
+                .map(log => log.id);
+            await db.logs.bulkDelete(vendorLogIds);
+            
+            // Delete old log entries table data
+            const oldLogEntries = await db.logEntries.where('character').equals(selectedCharId).toArray();
+            const oldLogIds = oldLogEntries
+                .filter(e => e.type === 'vendor_screen' || e.type === 'transaction')
+                .map(e => [e.filename, e.lineNumber, e.timestamp]);
+            if (oldLogIds.length > 0) {
+                await db.logEntries.bulkDelete(oldLogIds);
+            }
+            
             setConfirmPurgeVendors(false);
+            setVendorRefresh(prev => prev + 1); // Trigger refresh
         } catch (err) { console.error('Vendor purge error', err); }
     };
 
@@ -518,8 +556,26 @@ const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
 
                 // --- Vendor Data Loading ---
                 if (currentCharData && selectedCharId) {
-                    const vendorEntries = await db.objects.where('type').equals('vendors').toArray();
-                    const charVendors = vendorEntries.filter(e => e.refs && e.refs.includes(`character:${selectedCharId}`));
+                    const LogService = (await import('../services/logService')).default;
+                    
+                    // Load vendor balances from unified log system
+                    const vendorLogs = await LogService.getVendorBalances(selectedCharId);
+                    console.log(`[MyCharacterView] Loaded ${vendorLogs.length} vendor entries from unified logs`);
+                    
+                    // Convert to old format for compatibility
+                    const charVendors = vendorLogs.map(log => ({
+                        id: log.logData.vendorId,
+                        name: log.logData.vendorName,
+                        data: {
+                            npc: log.logData.vendorName,
+                            favor: log.logData.favor,
+                            favorLabel: log.logData.favorLabel,
+                            balance: log.logData.balance,
+                            resetTimer: log.logData.resetTimer,
+                            maxBalance: log.logData.maxBalance
+                        },
+                        refs: [`character:${selectedCharId}`]
+                    }));
                     
                     // Load NPC data to get SoulMateRequirement and Preferences
                     const allNpcs = await db.objects.where('type').equals('npcs').toArray();
@@ -708,29 +764,31 @@ const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
                     setVendorData([]);
                 }
                 
-                // Load transaction history for sales chart
+                // Load transaction history for sales chart using new unified log system
                 if (selectedCharId) {
-                    const allTransactions = await db.objects.where('type').equals('transactions').toArray();
-                    console.log(`Found ${allTransactions.length} total transactions in database`);
-                    console.log(`Looking for transactions with character:${selectedCharId}`);
-                    console.log(`First few transaction refs:`, allTransactions.slice(0, 5).map(t => ({ refs: t.refs, data: t.data })));
+                    const LogService = (await import('../services/logService')).default;
                     
-                    const charTransactions = allTransactions.filter(t => t.refs && t.refs.includes(`character:${selectedCharId}`));
-                    console.log(`Found ${charTransactions.length} transactions for character ${selectedCharId}`);
+                    console.log(`[MyCharacterView] Loading transactions for ${selectedCharId} from unified logs`);
+                    const summary = await LogService.getTransactionSummary(selectedCharId);
+                    
+                    console.log(`[MyCharacterView] Found ${summary.totalCount} transactions, total: ${summary.totalAmount}g`);
+                    
+                    // Convert to format expected by the view
+                    const charTransactions = summary.transactions.map(tx => ({
+                        id: tx.id,
+                        data: {
+                            npc: tx.logData.vendorName,
+                            npcId: tx.logData.vendorId,
+                            amount: tx.logData.amount,
+                            timestamp: tx.epochSeconds // Store as epoch seconds
+                        }
+                    }));
                     
                     setAllTransactions(charTransactions);
                     
-                    // Group by date and sum sales
-                    const dailySales = {};
-                    charTransactions.forEach(t => {
-                        const date = t.data.date;
-                        console.log(`Transaction: date=${date}, amount=${t.data.amount}, npc=${t.data.npc}`);
-                        if (date) {
-                            dailySales[date] = (dailySales[date] || 0) + t.data.amount;
-                        }
-                    });
-                    
-                    console.log('Daily sales totals:', dailySales);
+                    // Use pre-calculated daily sales from summary
+                    const dailySales = summary.dailySales;
+                    console.log('[MyCharacterView] Daily sales totals:', dailySales);
                     
                     // Create array of last 7 days
                     const today = new Date();
@@ -761,9 +819,22 @@ const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
         loadData();
     }, [selectedCharId, showAllInventory, availableChars, vendorRefresh]);
 
-    // Monitor for vendor resets and send notifications
+    // Monitor for vendor resets and send notifications (delegated to Electron)
     useEffect(() => {
         if (!notifyOnReset || vendorData.length === 0) return;
+        
+        // Update Electron with current vendor timers
+        if (window.electron?.updateVendorTimers) {
+            const timers = vendorData
+                .filter(v => v.data.resetTimer > 0)
+                .map(v => ({
+                    id: v.id,
+                    name: v.name,
+                    resetTime: v.data.resetTimer,
+                    maxBalance: v.data.maxBalance
+                }));
+            window.electron.updateVendorTimers(timers);
+        }
 
         const checkResets = () => {
             const now = Date.now();
@@ -786,21 +857,6 @@ const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
                             }
                         });
                     }
-                    
-                    // Notify if reset is within the next 60 seconds
-                    if (timeUntilReset > 0 && timeUntilReset <= 60000) {
-                        const notificationKey = `vendor_reset_${vendor.id}_${vendor.data.resetTimer}`;
-                        // Only notify once per vendor per reset time
-                        if (!sessionStorage.getItem(notificationKey)) {
-                            sessionStorage.setItem(notificationKey, 'true');
-                            if ('Notification' in window && Notification.permission === 'granted') {
-                                new Notification(`${vendor.name} vendor restock`, {
-                                    body: `Balance will reset to ${vendor.data.maxBalance === 2147483647 ? 0 : vendor.data.maxBalance.toLocaleString()} in ${Math.round(timeUntilReset / 1000)} seconds`,
-                                    icon: '/favicon.ico'
-                                });
-                            }
-                        }
-                    }
                 }
             });
             
@@ -810,14 +866,21 @@ const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
             }
         };
 
-        // Request notification permission if not already granted
-        if ('Notification' in window && Notification.permission === 'default') {
-            Notification.requestPermission();
-        }
-
         const interval = setInterval(checkResets, 30000); // Check every 30 seconds
         return () => clearInterval(interval);
     }, [notifyOnReset, vendorData]);
+
+    // Listen for live data updates from log monitoring
+    useEffect(() => {
+        const handleDataUpdate = (event) => {
+            console.log('MyCharacterView: received dataUpdated event', event.detail);
+            // Trigger a reload of vendor balances and transactions
+            setVendorRefresh(prev => prev + 1);
+        };
+
+        window.addEventListener('dataUpdated', handleDataUpdate);
+        return () => window.removeEventListener('dataUpdated', handleDataUpdate);
+    }, []);
 
     const handleSort = (key) => {
         let direction = 'asc';
@@ -1782,17 +1845,20 @@ const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
                             <tbody className="divide-y divide-slate-700/50">
                                 {(() => {
                                     const filtered = ledgerDate 
-                                        ? allTransactions.filter(t => t.data.date === ledgerDate)
+                                        ? allTransactions.filter(t => {
+                                            // Convert epoch seconds to local date
+                                            const date = new Date(t.data.timestamp * 1000);
+                                            const dateStr = date.toLocaleDateString('en-CA'); // YYYY-MM-DD
+                                            return dateStr === ledgerDate;
+                                        })
                                         : allTransactions;
                                     
                                     const sorted = [...filtered].sort((a, b) => {
                                         let compareResult = 0;
                                         
                                         if (ledgerSort.key === 'timestamp') {
-                                            // Create sortable datetime from date and time strings
-                                            const dateTimeA = `${a.data.date} ${a.data.time || '00:00:00'}`;
-                                            const dateTimeB = `${b.data.date} ${b.data.time || '00:00:00'}`;
-                                            compareResult = dateTimeA.localeCompare(dateTimeB);
+                                            // Compare epoch seconds directly
+                                            compareResult = a.data.timestamp - b.data.timestamp;
                                         } else if (ledgerSort.key === 'vendor') {
                                             const vendorA = (a.data.npc || '').replace('NPC_', '');
                                             const vendorB = (b.data.npc || '').replace('NPC_', '');
@@ -1815,10 +1881,17 @@ const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
                                     }
                                     
                                     return sorted.map((tx, idx) => {
-                                        const dateObj = new Date(tx.data.date);
-                                        const dateStr = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                                        const timeStr = tx.data.time || '';
-                                        const dateTime = `${dateStr} ${timeStr}`;
+                                        // Convert epoch seconds to Date and let browser handle timezone
+                                        const date = new Date(tx.data.timestamp * 1000);
+                                        const dateTime = date.toLocaleString('en-US', {
+                                            month: 'short',
+                                            day: 'numeric',
+                                            year: 'numeric',
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                            second: '2-digit',
+                                            hour12: false
+                                        });
                                         
                                         return (
                                             <tr key={tx.id} className="hover:bg-slate-700/30 transition-colors">

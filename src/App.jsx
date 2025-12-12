@@ -29,6 +29,7 @@ import LoreView from './views/LoreView.jsx';
 import TreasureListView from './views/TreasureListView.jsx';
 import MyCharacterView from './views/MyCharacterView.jsx';
 import EventsView from './views/EventsView.jsx';
+import parseAndStoreLog from './utils/unifiedLogParser.js';
 
 // Helper Views
 const LandingView = ({ onSelectCategory }) => {
@@ -301,6 +302,15 @@ function ExplorerView({ initialParams, onNavigate, onBack }) {
                             <button onClick={onBack} className="flex items-center text-indigo-400 font-medium"><Icon name="chevron-left" className="w-5 h-5" /> Back</button>
                         </div>
                         <div className="p-4 md:p-8">
+                            {onBack && (
+                                <button 
+                                  onClick={onBack}
+                                  className="mb-4 flex items-center gap-2 text-indigo-400 hover:text-indigo-300 transition-colors text-sm font-medium"
+                                >
+                                  <Icon name="arrow-left" className="w-4 h-4" />
+                                  Back
+                                </button>
+                              )}
                             <div className="flex items-start gap-4 mb-6 relative">
                                 <WikiButton type={selectedObj.type} name={selectedObj.name} />
                                 <button 
@@ -363,8 +373,12 @@ export default function App() {
     // Expose showToast globally for background processes
     useEffect(() => {
         window.showToast = (message, type = 'info') => {
-            const id = Date.now();
-            setToasts(prev => [...prev, { id, message, type }]);
+            const id = Date.now() + Math.random();
+            setToasts(prev => {
+                const newToasts = [...prev, { id, message, type }];
+                // Keep only the last 2 toasts
+                return newToasts.slice(-2);
+            });
             
             // Auto-remove after 4 seconds
             setTimeout(() => {
@@ -401,6 +415,62 @@ export default function App() {
              }
         }
         check();
+    }, []);
+
+    // Set up live log monitoring at app level (works in all views)
+    useEffect(() => {
+        if (!window.electron?.onLiveLogUpdate) return;
+
+        console.log('[App] Setting up live log monitoring listener');
+        
+        // Listen for initial context (full log file on startup)
+        const unsubscribeInitial = window.electron.onLiveLogInitialContext?.(async (data) => {
+            try {
+                console.log(`[App] Initial context received: ${data.content.length} bytes`);
+                // Parse without showing notifications, just to establish vendor sessions
+                await parseAndStoreLog(data.content, 'player.log-initial');
+                console.log('[App] Initial context parsed - vendor sessions established');
+            } catch (err) {
+                console.error('[App] Error parsing initial context:', err);
+            }
+        });
+        
+        // Listen for incremental updates
+        const unsubscribe = window.electron.onLiveLogUpdate(async (data) => {
+            try {
+                console.log(`[App] Live log update received: ${data.content.length} bytes`);
+                const result = await parseAndStoreLog(data.content, 'live-player.log');
+                
+                if (result.entriesWritten === 0) {
+                    console.log(`[App] No new entries. Skipped ${result.skippedDuplicates || 0} duplicates`);
+                    return;
+                }
+                
+                console.log(`[App] SUCCESS: ${result.entriesWritten} new entries for ${result.character}`);
+                
+                // Trigger global data refresh
+                window.dispatchEvent(new CustomEvent('dataUpdated', {
+                    detail: {
+                        character: result.character,
+                        entriesWritten: result.entriesWritten,
+                        source: 'live-log'
+                    }
+                }));
+                
+                // Show toast notification
+                if (window.showToast) {
+                    window.showToast(`Live update: ${result.entriesWritten} entries`, 'success');
+                }
+            } catch (err) {
+                console.error('[App] Live log parse error:', err);
+            }
+        });
+
+        return () => {
+            console.log('[App] Cleaning up live log monitoring listener');
+            unsubscribeInitial?.();
+            unsubscribe?.();
+        };
     }, []);
 
     useEffect(() => {
@@ -544,7 +614,7 @@ export default function App() {
                         <ExplorerView 
                             initialParams={explorerParams} 
                             onNavigate={handleExplorerNavigate} 
-                            onBack={goBack} 
+                            onBack={historyIndex > 0 ? goBack : null} 
                         />
                     ) : (
                         <div className="h-full overflow-y-auto">

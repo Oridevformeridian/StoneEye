@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { resetParserState } from '../utils/unifiedLogParser';
 
 const ElectronSettings = ({ onImportLog, onLiveLogUpdate }) => {
     const [settings, setSettings] = useState(null);
@@ -6,6 +7,8 @@ const ElectronSettings = ({ onImportLog, onLiveLogUpdate }) => {
     const [reportExports, setReportExports] = useState([]);
     const [loading, setLoading] = useState(true);
     const [liveMonitoringEnabled, setLiveMonitoringEnabled] = useState(false);
+    const [selectedLogs, setSelectedLogs] = useState(new Set());
+    const [reimporting, setReimporting] = useState(false);
 
     useEffect(() => {
         loadSettings();
@@ -38,9 +41,11 @@ const ElectronSettings = ({ onImportLog, onLiveLogUpdate }) => {
             });
             
             const unsubscribeLiveLog = window.electron.onLiveLogUpdate?.(async (data) => {
-                console.log('Live log update received:', data.content.length, 'bytes');
+                console.log('[ElectronSettings] Live log update received:', data.content.length, 'bytes');
                 if (onLiveLogUpdate) {
-                    onLiveLogUpdate(data.content);
+                    await onLiveLogUpdate(data.content);
+                } else {
+                    console.warn('[ElectronSettings] No onLiveLogUpdate handler provided!');
                 }
             });
             
@@ -132,6 +137,62 @@ const ElectronSettings = ({ onImportLog, onLiveLogUpdate }) => {
             const fileName = logPath.split(/[\\/]/).pop();
             const file = new File([blob], fileName, { type: 'text/plain' });
             onImportLog(file);
+        }
+    };
+
+    const handleToggleLogSelection = (logPath) => {
+        const newSelected = new Set(selectedLogs);
+        if (newSelected.has(logPath)) {
+            newSelected.delete(logPath);
+        } else {
+            newSelected.add(logPath);
+        }
+        setSelectedLogs(newSelected);
+    };
+
+    const handleSelectAllLogs = () => {
+        if (selectedLogs.size === archivedLogs.length) {
+            setSelectedLogs(new Set());
+        } else {
+            setSelectedLogs(new Set(archivedLogs.map(log => log.path)));
+        }
+    };
+
+    const handleReimportSelected = async () => {
+        if (selectedLogs.size === 0) return;
+        
+        setReimporting(true);
+        
+        try {
+            // Reset parser state to avoid contamination from live monitoring
+            resetParserState();
+            console.log('[Re-import] Parser state reset');
+            
+            const logsToImport = archivedLogs.filter(log => selectedLogs.has(log.path));
+            let completed = 0;
+            
+            if (window.showToast) {
+                window.showToast(`Re-importing ${logsToImport.length} archived log(s)...`, 'info');
+            }
+            
+            for (const log of logsToImport) {
+                await handleImportLog(log.path);
+                completed++;
+            }
+            
+            if (window.showToast) {
+                window.showToast(`✅ Re-imported ${completed} log(s)`, 'success');
+            }
+            
+            // Clear selection after successful import
+            setSelectedLogs(new Set());
+        } catch (err) {
+            console.error('[Re-import] Error:', err);
+            if (window.showToast) {
+                window.showToast(`❌ Re-import error: ${err.message}`, 'error');
+            }
+        } finally {
+            setReimporting(false);
         }
     };
 
@@ -243,8 +304,33 @@ const ElectronSettings = ({ onImportLog, onLiveLogUpdate }) => {
 
             {/* Archived Logs List */}
             <div className="bg-slate-800/50 p-4 rounded border border-slate-700">
-                <div className="text-sm font-bold text-slate-300 mb-3">
-                    Archived Logs ({archivedLogs.length})
+                <div className="flex items-center justify-between mb-3">
+                    <div className="text-sm font-bold text-slate-300">
+                        Archived Logs ({archivedLogs.length})
+                    </div>
+                    {archivedLogs.length > 0 && (
+                        <div className="flex gap-2">
+                            <button
+                                onClick={handleSelectAllLogs}
+                                className="px-3 py-1 bg-slate-700 text-slate-300 rounded text-xs hover:bg-slate-600"
+                            >
+                                {selectedLogs.size === archivedLogs.length ? 'Deselect All' : 'Select All'}
+                            </button>
+                            {selectedLogs.size > 0 && (
+                                <button
+                                    onClick={handleReimportSelected}
+                                    disabled={reimporting}
+                                    className={`px-3 py-1 rounded text-xs font-semibold ${
+                                        reimporting 
+                                            ? 'bg-slate-600 text-slate-400 cursor-not-allowed' 
+                                            : 'bg-green-600 text-white hover:bg-green-500'
+                                    }`}
+                                >
+                                    {reimporting ? 'Re-importing...' : `Re-import ${selectedLogs.size} Selected`}
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </div>
                 
                 {archivedLogs.length === 0 ? (
@@ -256,8 +342,18 @@ const ElectronSettings = ({ onImportLog, onLiveLogUpdate }) => {
                         {archivedLogs.map(log => (
                             <div 
                                 key={log.path}
-                                className="flex items-center justify-between p-2 bg-slate-900/50 rounded hover:bg-slate-900 transition-colors"
+                                className={`flex items-center gap-3 p-2 rounded transition-colors ${
+                                    selectedLogs.has(log.path) 
+                                        ? 'bg-indigo-900/30 border border-indigo-700' 
+                                        : 'bg-slate-900/50 hover:bg-slate-900'
+                                }`}
                             >
+                                <input
+                                    type="checkbox"
+                                    checked={selectedLogs.has(log.path)}
+                                    onChange={() => handleToggleLogSelection(log.path)}
+                                    className="w-4 h-4 cursor-pointer"
+                                />
                                 <div className="flex-1 min-w-0">
                                     <div className="text-sm text-slate-300 truncate">{log.name}</div>
                                     <div className="text-xs text-slate-500">
@@ -266,7 +362,8 @@ const ElectronSettings = ({ onImportLog, onLiveLogUpdate }) => {
                                 </div>
                                 <button 
                                     onClick={() => handleImportLog(log.path)}
-                                    className="ml-3 px-3 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-500"
+                                    disabled={reimporting}
+                                    className="px-3 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-500 disabled:bg-slate-600 disabled:cursor-not-allowed"
                                 >
                                     Import
                                 </button>
