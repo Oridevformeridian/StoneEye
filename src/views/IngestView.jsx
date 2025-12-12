@@ -3,7 +3,6 @@ import { db } from '../db/index.js';
 import { KNOWN_FILES } from '../constants/index.js';
 import Icon from '../components/Icon.jsx';
 import LoadingBar from '../components/LoadingBar.jsx';
-import { parseLogFileObject } from '../utils/logParser.js';
 import parseAndStoreLog from '../utils/unifiedLogParser.js';
 import LogService from '../services/logService.js';
 import ElectronSettings from '../components/ElectronSettings.jsx';

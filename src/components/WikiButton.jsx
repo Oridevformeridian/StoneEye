@@ -1,4 +1,6 @@
+
 import React from 'react';
+import PropTypes from 'prop-types';
 import Icon from './Icon';
 
 const WikiButton = ({ type, name }) => {
@@ -28,6 +30,12 @@ const WikiButton = ({ type, name }) => {
             <Icon name="external-link" className="w-6 h-6" />
         </a>
     );
+};
+
+
+WikiButton.propTypes = {
+    type: PropTypes.string,
+    name: PropTypes.string,
 };
 
 export default WikiButton;

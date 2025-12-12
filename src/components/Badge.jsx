@@ -1,4 +1,6 @@
+
 import React from 'react';
+import PropTypes from 'prop-types';
 
 const Badge = ({ children, color = 'slate' }) => {
     const colors = {
@@ -13,6 +15,12 @@ const Badge = ({ children, color = 'slate' }) => {
             {children}
         </span>
     );
+};
+
+
+Badge.propTypes = {
+    children: PropTypes.node.isRequired,
+    color: PropTypes.oneOf(['slate', 'indigo', 'emerald', 'amber', 'red']),
 };
 
 export default Badge;

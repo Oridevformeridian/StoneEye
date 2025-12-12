@@ -1,4 +1,6 @@
+
 import React from 'react';
+import PropTypes from 'prop-types';
 import { icons } from 'lucide-react';
 
 const toPascalCase = (str) => {
@@ -15,6 +17,12 @@ const Icon = ({ name, className, ...props }) => {
   }
 
   return <LucideIcon className={className} {...props} />;
+};
+
+
+Icon.propTypes = {
+  name: PropTypes.string.isRequired,
+  className: PropTypes.string,
 };
 
 export default Icon;

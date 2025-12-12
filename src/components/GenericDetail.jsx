@@ -1,4 +1,6 @@
+
 import React from 'react';
+import PropTypes from 'prop-types';
 import StatBox from './StatBox';
 import ReferenceList from './ReferenceList';
 
@@ -15,5 +17,12 @@ const GenericDetail = ({ data, referencedBy, onNavigate }) => (
         <ReferenceList title="Referenced By" refs={referencedBy} onNavigate={onNavigate} />
     </div>
 );
+
+
+GenericDetail.propTypes = {
+    data: PropTypes.object.isRequired,
+    referencedBy: PropTypes.array,
+    onNavigate: PropTypes.func.isRequired,
+};
 
 export default GenericDetail;

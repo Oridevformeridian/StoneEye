@@ -1,4 +1,6 @@
+
 import React from 'react';
+import PropTypes from 'prop-types';
 
 const StatBox = ({ label, value, onClick }) => (
     <div className="bg-slate-800/40 p-3 rounded border border-slate-700/50">
@@ -12,5 +14,12 @@ const StatBox = ({ label, value, onClick }) => (
         )}
     </div>
 );
+
+
+StatBox.propTypes = {
+    label: PropTypes.string.isRequired,
+    value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+    onClick: PropTypes.func,
+};
 
 export default StatBox;

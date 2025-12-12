@@ -1,4 +1,6 @@
+
 import React from 'react';
+import PropTypes from 'prop-types';
 import Icon from './Icon';
 
 const MobileNavBtn = ({ active, onClick, icon, label }) => (
@@ -12,5 +14,13 @@ const MobileNavBtn = ({ active, onClick, icon, label }) => (
         <span className="text-[10px] font-medium">{label}</span>
     </button>
 );
+
+
+MobileNavBtn.propTypes = {
+    active: PropTypes.bool,
+    onClick: PropTypes.func.isRequired,
+    icon: PropTypes.string.isRequired,
+    label: PropTypes.string.isRequired,
+};
 
 export default MobileNavBtn;

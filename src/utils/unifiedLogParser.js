@@ -32,7 +32,7 @@ export async function parseAndStoreLog(content, filename = 'unknown') {
   const startRe = /ProcessStartInteraction\(\s*(\d+)\s*,\s*([^,]+?)\s*,\s*([0-9.]+)\s*,\s*([^,]+?)\s*,\s*([^,\)\s]+)\s*,?/;
   const vendorRe = /ProcessVendorScreen\(\s*(\d+)\s*,\s*([^,]+?)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,/;
   const vendorUpdateRe = /ProcessVendorUpdateAvailableGold\(\s*([0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,/;
-  const loginRe = /Logged in as character\s+(\S+)\.\s+Time UTC=(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}:\d{2}:\d{2})/;
+  const loginRe = /Logged in as character\s+(\S+)\.\s+Time UTC=(\d{2})\/(\d{2})\/(\d{4})/;
   const timeRe = /^\[(\d{2}:\d{2}:\d{2})\]\s*/;
   const dateRe = /^\[(\d{4}-\d{2}-\d{2})\s+/;
   const fullDateTimeRe = /^\[(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\]/;
@@ -90,15 +90,16 @@ export async function parseAndStoreLog(content, filename = 'unknown') {
 
     // Extract date from line
     let dateTimeMatch = line.match(fullDateTimeRe);
+    let time = null;
     if (dateTimeMatch) {
       currentDate = dateTimeMatch[1];
+      time = dateTimeMatch[2];
     } else {
       const dateMatch = line.match(dateRe);
       if (dateMatch) currentDate = dateMatch[1];
+      const timeMatch = line.match(timeRe);
+      if (timeMatch) time = timeMatch[1];
     }
-
-    const timeMatch = line.match(timeRe);
-    const time = timeMatch ? timeMatch[1] : null;
 
     // Detect date rollover
     if (time && lastTime && currentDate) {
@@ -122,10 +123,10 @@ export async function parseAndStoreLog(content, filename = 'unknown') {
       const month = m[2];
       const day = m[3];
       const year = m[4];
-      const loginTime = m[5];
+      const loginTime = time;
       currentDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
       
-      const epochSeconds = toEpochSeconds(currentDate, loginTime);
+      const epochSeconds = toEpochSeconds(currentDate, loginTime || '00:00:00');
       
       // Log login event
       logEntries.push({

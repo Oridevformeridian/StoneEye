@@ -1,9 +1,12 @@
+
 import React, { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
 import StatBox from './StatBox';
 import Icon from './Icon';
 import GameIcon from './GameIcon';
 import Badge from './Badge';
 import { db } from '../db'; // Import db from the new module
+import { validateItem } from '../validation/validate';
 import ReferenceList from './ReferenceList';
 
 const AbilityDetail = ({ data, onNavigate, referencedBy }) => {
@@ -17,7 +20,15 @@ const AbilityDetail = ({ data, onNavigate, referencedBy }) => {
             await Promise.all(data.ItemsConsumed.map(async (item) => {
                 if (item.ItemCode) {
                     const obj = await db.objects.get({ type: 'items', id: item.ItemCode });
-                    if (obj) newNames[item.ItemCode] = { name: obj.name, iconId: obj.data.IconId || obj.data.IconID };
+                    try {
+                        if (obj) {
+                            const validObj = validateItem(obj);
+                            newNames[item.ItemCode] = { name: validObj.name, iconId: validObj.data.IconId || validObj.data.IconID };
+                        }
+                    } catch (e) {
+                        // Optionally log or handle validation error
+                        console.error('Invalid item data:', e, obj);
+                    }
                 }
             }));
             setReagentNames(newNames);
@@ -78,6 +89,13 @@ const AbilityDetail = ({ data, onNavigate, referencedBy }) => {
             <ReferenceList title="Referenced By" refs={referencedBy} onNavigate={onNavigate} />
         </div>
     );
+};
+
+
+AbilityDetail.propTypes = {
+    data: PropTypes.object.isRequired,
+    onNavigate: PropTypes.func.isRequired,
+    referencedBy: PropTypes.array,
 };
 
 export default AbilityDetail;

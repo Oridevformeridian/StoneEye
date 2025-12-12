@@ -1,4 +1,6 @@
+
 import React from 'react';
+import PropTypes from 'prop-types';
 import Icon from './Icon';
 
 const NavButton = ({ active, onClick, icon, label }) => (
@@ -11,5 +13,13 @@ const NavButton = ({ active, onClick, icon, label }) => (
         <Icon name={icon} className="w-5 h-5" /> {label}
     </button>
 );
+
+
+NavButton.propTypes = {
+    active: PropTypes.bool,
+    onClick: PropTypes.func.isRequired,
+    icon: PropTypes.string.isRequired,
+    label: PropTypes.string.isRequired,
+};
 
 export default NavButton;

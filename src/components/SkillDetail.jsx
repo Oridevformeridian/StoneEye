@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
 import StatBox from './StatBox';
 import Icon from './Icon';
 import GameIcon from './GameIcon';
 import { db } from '../db';
 import ReferenceList from './ReferenceList';
+import { validateItem } from '../validation/validate';
 
 const SkillDetail = ({ data, onNavigate, referencedBy }) => {
     const [rewards, setRewards] = useState([]);
@@ -45,7 +47,17 @@ const SkillDetail = ({ data, onNavigate, referencedBy }) => {
                      const matches = await db.objects.where('type').equals(type).filter(o => o.data.InternalName === rawId || o.name === rawId).toArray();
                      if (matches.length > 0) obj = matches[0];
                 }
-                if (obj) objectMap.set(key, obj);
+                if (obj) {
+                    try {
+                        // Only validate items for now, expand as needed
+                        if (type === 'items') {
+                            obj = validateItem(obj);
+                        }
+                        objectMap.set(key, obj);
+                    } catch (e) {
+                        console.error('Invalid object data:', e, obj);
+                    }
+                }
             }));
 
             for (const lvl of levels) {
@@ -142,6 +154,13 @@ const SkillDetail = ({ data, onNavigate, referencedBy }) => {
             )}
         </div>
     );
+};
+
+
+SkillDetail.propTypes = {
+    data: PropTypes.object.isRequired,
+    onNavigate: PropTypes.func.isRequired,
+    referencedBy: PropTypes.array,
 };
 
 export default SkillDetail;

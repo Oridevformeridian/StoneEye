@@ -1,4 +1,6 @@
+
 import React from 'react';
+import PropTypes from 'prop-types';
 
 const GameIcon = ({ iconId, size = "w-8 h-8", className = "" }) => {
     if (!iconId) return null;
@@ -12,6 +14,13 @@ const GameIcon = ({ iconId, size = "w-8 h-8", className = "" }) => {
             />
         </div>
     );
+};
+
+
+GameIcon.propTypes = {
+    iconId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    size: PropTypes.string,
+    className: PropTypes.string,
 };
 
 export default GameIcon;

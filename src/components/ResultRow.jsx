@@ -1,4 +1,6 @@
+
 import React from 'react';
+import PropTypes from 'prop-types';
 import GameIcon from './GameIcon';
 
 const ResultRow = ({ obj, isSelected, onClick }) => {
@@ -17,6 +19,19 @@ const ResultRow = ({ obj, isSelected, onClick }) => {
             </div>
         </div>
     );
+};
+
+
+ResultRow.propTypes = {
+    obj: PropTypes.shape({
+        data: PropTypes.object.isRequired,
+        name: PropTypes.string.isRequired,
+        type: PropTypes.string,
+        category: PropTypes.string,
+        derivedIcon: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    }).isRequired,
+    isSelected: PropTypes.bool,
+    onClick: PropTypes.func.isRequired,
 };
 
 export default ResultRow;

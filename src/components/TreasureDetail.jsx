@@ -1,12 +1,23 @@
 import React from 'react';
+import PropTypes from 'prop-types';
 import StatBox from './StatBox';
 import { db } from '../db';
+import { validateItem } from '../validation/validate';
 
 const TreasureDetail = ({ data, onNavigate }) => {
     const handleSkillClick = async () => {
         if (!data.Skill) return;
         const skills = await db.objects.where('type').equals('skills').filter(s => s.name === data.Skill).toArray();
-        if (skills.length > 0) onNavigate('skills', skills[0].id);
+        let validSkill = null;
+        if (skills.length > 0) {
+            try {
+                validSkill = validateItem(skills[0]); // Use ItemSchema for now, or create SkillSchema if needed
+            } catch (e) {
+                console.error('Invalid skill data:', e, skills[0]);
+                return;
+            }
+            onNavigate('skills', validSkill.id);
+        }
     };
 
     return (
@@ -40,6 +51,12 @@ const TreasureDetail = ({ data, onNavigate }) => {
             )}
         </div>
     );
+};
+
+
+TreasureDetail.propTypes = {
+    data: PropTypes.object.isRequired,
+    onNavigate: PropTypes.func.isRequired,
 };
 
 export default TreasureDetail;

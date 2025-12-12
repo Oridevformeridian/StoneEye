@@ -1,8 +1,11 @@
+
 import React, { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
 import StatBox from './StatBox';
 import Icon from './Icon';
 import GameIcon from './GameIcon';
 import { db } from '../db'; // Import db from the new module
+import { validateItem } from '../validation/validate';
 import ReferenceList from './ReferenceList';
 
 const RecipeDetail = ({ data, onNavigate, referencedBy }) => {
@@ -17,7 +20,15 @@ const RecipeDetail = ({ data, onNavigate, referencedBy }) => {
             const newNames = {};
             await Promise.all(Array.from(idsToLoad).map(async (id) => {
                 const item = await db.objects.get({ type: 'items', id: id });
-                if (item) newNames[id] = { name: item.name, iconId: item.data.IconId || item.data.IconID };
+                try {
+                    if (item) {
+                        const validItem = validateItem(item);
+                        newNames[id] = { name: validItem.name, iconId: validItem.data.IconId || validItem.data.IconID };
+                    }
+                } catch (e) {
+                    // Optionally log or handle validation error
+                    console.error('Invalid item data:', e, item);
+                }
             }));
             setItemNames(newNames);
         };
@@ -78,6 +89,13 @@ const RecipeDetail = ({ data, onNavigate, referencedBy }) => {
             <ReferenceList title="Referenced By" refs={referencedBy} onNavigate={onNavigate} />
         </div>
     );
+};
+
+
+RecipeDetail.propTypes = {
+    data: PropTypes.object.isRequired,
+    onNavigate: PropTypes.func.isRequired,
+    referencedBy: PropTypes.array,
 };
 
 export default RecipeDetail;

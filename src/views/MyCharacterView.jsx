@@ -3,7 +3,7 @@ import Icon from '../components/Icon';
 import GameIcon from '../components/GameIcon';
 import { db } from '../db';
 import { FAVOR_LEVELS } from '../constants';
-import { parseLogFileObject } from '../utils/logParser.js';
+import parseAndStoreLog from '../utils/unifiedLogParser.js';
 
 const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
     const [activeTab, setActiveTab] = useState('stats');
@@ -72,103 +72,22 @@ const MyCharacterView = ({ onNavigate, goToIngest, goBack }) => {
     const handleCharLogUpload = async (e) => {
         const files = Array.from(e.target.files || []);
         if (files.length === 0 || !selectedCharId) return;
-        
         let totalEntries = 0;
-        let totalTransactions = 0;
         let filesProcessed = 0;
-        let skippedDuplicates = 0;
-        
         try {
             for (const file of files) {
-                const parseResult = await parseLogFileObject(file);
-                const parsed = parseResult.vendors || parseResult; // Handle both old and new format
-                const transactions = parseResult.transactions || [];
-                const logEntries = parseResult.logEntries || [];
-                
-                console.log(`Processing ${file.name}: ${logEntries.length} log entries, ${parsed.length} vendors, ${transactions.length} transactions`);
-                
-                // Check for existing log entries to prevent duplicates
-                const existingEntries = new Set();
-                if (logEntries.length > 0) {
-                    const compositeKeys = logEntries.map(e => [e.filename, e.lineNumber, e.timestamp]);
-                    const existing = await db.logEntries.where('[filename+lineNumber+timestamp]').anyOf(compositeKeys).toArray();
-                    existing.forEach(e => existingEntries.add(`${e.filename}+${e.lineNumber}+${e.timestamp}`));
-                    console.log(`Found ${existing.length} existing log entries out of ${logEntries.length} total`);
-                }
-                
-                // Filter log entries to only new ones
-                const newLogEntries = logEntries.filter(e => {
-                    const key = `${e.filename}+${e.lineNumber}+${e.timestamp}`;
-                    return !existingEntries.has(key);
-                });
-                
-                if (newLogEntries.length < logEntries.length) {
-                    skippedDuplicates += (logEntries.length - newLogEntries.length);
-                    console.log(`Skipping ${logEntries.length - newLogEntries.length} duplicate log entries`);
-                }
-                
-                // Store new log entries in database
-                if (newLogEntries.length > 0) {
-                    await db.logEntries.bulkPut(newLogEntries);
-                    console.log(`Stored ${newLogEntries.length} new log entries`);
-                }
-                
-                // Only process vendors/transactions if we have new log entries
-                if (newLogEntries.length === 0 && logEntries.length > 0) {
-                    console.log(`All log entries already processed - skipping ${file.name}`);
-                } else if (parsed && parsed.length > 0) {
-                    const entries = parsed.map(p => {
-                        const entryId = `${selectedCharId}_${p.id}_${p.npc}`;
-                        const name = p.npc || (`vendor_${p.id}`);
-                        const refs = [];
-                        refs.push(`character:${selectedCharId}`);
-                        if (p.npc) refs.push(`npc:${p.npc}`);
-                        if (p.npc) refs.push(`vendor:${p.npc}`);
-                        return {
-                            type: 'vendors',
-                            id: entryId,
-                            name,
-                            data: { ...p, character: selectedCharId },
-                            refs,
-                            category: 'vendor'
-                        };
-                    });
-                    await db.objects.bulkPut(entries);
-                    totalEntries += entries.length;
-                    
-                    // Store transactions
-                    if (transactions && transactions.length > 0) {
-                        const transactionEntries = transactions.map((t, idx) => {
-                            const refs = [`character:${t.character}`, `npc:${t.npc}`];
-                            console.log(`Storing transaction: character=${t.character}, npc=${t.npc}, refs=`, refs);
-                            return {
-                                type: 'transactions',
-                                id: `${t.character}_${t.timestamp}_${t.npcId}_${idx}`, // Add index to make unique
-                                name: `Sale to ${t.npc}`,
-                                data: t,
-                                refs,
-                                category: 'transaction'
-                            };
-                        });
-                        await db.objects.bulkPut(transactionEntries);
-                        totalTransactions += transactionEntries.length;
-                    }
-                }
-                
+                const content = await file.text();
+                const parseResult = await parseAndStoreLog(content, file.name);
+                totalEntries += parseResult.entriesWritten;
                 filesProcessed++;
+                console.log(`Processed ${file.name}: ${parseResult.entriesWritten} entries written, ${parseResult.skippedDuplicates} duplicates, character: ${parseResult.character}`);
             }
-            
-            // Reload vendor data after import
             if (filesProcessed > 0) {
-                console.log(`Imported ${totalEntries} vendor entries and ${totalTransactions} transactions from ${filesProcessed} file(s)${skippedDuplicates > 0 ? ` (skipped ${skippedDuplicates} duplicates)` : ''}`);
-                // Force vendor data reload
                 setVendorRefresh(prev => prev + 1);
             }
-        } catch (err) { 
+        } catch (err) {
             console.error('Log import error', err);
         }
-        
-        // Clear the file input
         e.target.value = '';
     };
 

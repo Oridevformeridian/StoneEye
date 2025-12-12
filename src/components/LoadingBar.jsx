@@ -1,4 +1,6 @@
+
 import React from 'react';
+import PropTypes from 'prop-types';
 
 const LoadingBar = ({ progress, status, subStatus }) => (
     <div className="w-full max-w-md mx-auto mt-4 px-4">
@@ -12,5 +14,12 @@ const LoadingBar = ({ progress, status, subStatus }) => (
         <div className="text-center text-xs text-slate-500 truncate">{subStatus}</div>
     </div>
 );
+
+
+LoadingBar.propTypes = {
+    progress: PropTypes.number.isRequired,
+    status: PropTypes.string,
+    subStatus: PropTypes.string,
+};
 
 export default LoadingBar;
